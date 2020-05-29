@@ -944,10 +944,10 @@ typedef enum { XXH3_acc_64bits, XXH3_acc_128bits } XXH3_accWidth_e;
  *
  * Both XXH3_64bits and XXH3_128bits use this subroutine.
  */
-#if (XXH_VECTOR == XXH_AVX512)
+#if defined(__AVX512F__)
 
 XXH_FORCE_INLINE void
-XXH3_accumulate_512(      void* XXH_RESTRICT acc,
+XXH3_accumulate_512_avx512(void* XXH_RESTRICT acc,
                     const void* XXH_RESTRICT input,
                     const void* XXH_RESTRICT secret,
                     XXH3_accWidth_e accWidth)
@@ -1003,7 +1003,7 @@ XXH3_accumulate_512(      void* XXH_RESTRICT acc,
  */
 
 XXH_FORCE_INLINE void
-XXH3_scrambleAcc(void* XXH_RESTRICT acc, const void* XXH_RESTRICT secret)
+XXH3_scrambleAcc_avx512(void* XXH_RESTRICT acc, const void* XXH_RESTRICT secret)
 {
     XXH_ASSERT((((size_t)acc) & 63) == 0);
     XXH_STATIC_ASSERT(XXH_STRIPE_LEN == sizeof(__m512i));
@@ -1026,11 +1026,12 @@ XXH3_scrambleAcc(void* XXH_RESTRICT acc, const void* XXH_RESTRICT secret)
     }
 }
 
+#endif
 
-#elif (XXH_VECTOR == XXH_AVX2)
+#if defined(__AVX2__)
 
 XXH_FORCE_INLINE void
-XXH3_accumulate_512(      void* XXH_RESTRICT acc,
+XXH3_accumulate_512_avx2( void* XXH_RESTRICT acc,
                     const void* XXH_RESTRICT input,
                     const void* XXH_RESTRICT secret,
                     XXH3_accWidth_e accWidth)
@@ -1072,7 +1073,7 @@ XXH3_accumulate_512(      void* XXH_RESTRICT acc,
 }
 
 XXH_FORCE_INLINE void
-XXH3_scrambleAcc(void* XXH_RESTRICT acc, const void* XXH_RESTRICT secret)
+XXH3_scrambleAcc_avx2(void* XXH_RESTRICT acc, const void* XXH_RESTRICT secret)
 {
     XXH_ASSERT((((size_t)acc) & 31) == 0);
     {   XXH_ALIGN(32) __m256i* const xacc = (__m256i*) acc;
@@ -1100,10 +1101,12 @@ XXH3_scrambleAcc(void* XXH_RESTRICT acc, const void* XXH_RESTRICT secret)
     }
 }
 
-#elif (XXH_VECTOR == XXH_SSE2)
+#endif
+
+#if defined(__SSE2__) || defined(_M_AMD64) || defined(_M_X64) || (defined(_M_IX86_FP) && (_M_IX86_FP == 2))
 
 XXH_FORCE_INLINE void
-XXH3_accumulate_512(      void* XXH_RESTRICT acc,
+XXH3_accumulate_512_sse2( void* XXH_RESTRICT acc,
                     const void* XXH_RESTRICT input,
                     const void* XXH_RESTRICT secret,
                     XXH3_accWidth_e accWidth)
@@ -1146,7 +1149,7 @@ XXH3_accumulate_512(      void* XXH_RESTRICT acc,
 }
 
 XXH_FORCE_INLINE void
-XXH3_scrambleAcc(void* XXH_RESTRICT acc, const void* XXH_RESTRICT secret)
+XXH3_scrambleAcc_sse2(void* XXH_RESTRICT acc, const void* XXH_RESTRICT secret)
 {
     XXH_ASSERT((((size_t)acc) & 15) == 0);
     {   XXH_ALIGN(16) __m128i* const xacc = (__m128i*) acc;
@@ -1174,10 +1177,12 @@ XXH3_scrambleAcc(void* XXH_RESTRICT acc, const void* XXH_RESTRICT secret)
     }
 }
 
-#elif (XXH_VECTOR == XXH_NEON)
+#endif
+
+#if (XXH_VECTOR == XXH_NEON)
 
 XXH_FORCE_INLINE void
-XXH3_accumulate_512(      void* XXH_RESTRICT acc,
+XXH3_accumulate_512_neon( void* XXH_RESTRICT acc,
                     const void* XXH_RESTRICT input,
                     const void* XXH_RESTRICT secret,
                     XXH3_accWidth_e accWidth)
@@ -1220,7 +1225,7 @@ XXH3_accumulate_512(      void* XXH_RESTRICT acc,
 }
 
 XXH_FORCE_INLINE void
-XXH3_scrambleAcc(void* XXH_RESTRICT acc, const void* XXH_RESTRICT secret)
+XXH3_scrambleAcc_neon(void* XXH_RESTRICT acc, const void* XXH_RESTRICT secret)
 {
     XXH_ASSERT((((size_t)acc) & 15) == 0);
 
@@ -1272,10 +1277,12 @@ XXH3_scrambleAcc(void* XXH_RESTRICT acc, const void* XXH_RESTRICT secret)
     }   }
 }
 
-#elif (XXH_VECTOR == XXH_VSX)
+#endif
+
+#if (XXH_VECTOR == XXH_VSX)
 
 XXH_FORCE_INLINE void
-XXH3_accumulate_512(      void* XXH_RESTRICT acc,
+XXH3_accumulate_512_vsx(  void* XXH_RESTRICT acc,
                     const void* XXH_RESTRICT input,
                     const void* XXH_RESTRICT secret,
                     XXH3_accWidth_e accWidth)
@@ -1312,7 +1319,7 @@ XXH3_accumulate_512(      void* XXH_RESTRICT acc,
 }
 
 XXH_FORCE_INLINE void
-XXH3_scrambleAcc(void* XXH_RESTRICT acc, const void* XXH_RESTRICT secret)
+XXH3_scrambleAcc_vsx(void* XXH_RESTRICT acc, const void* XXH_RESTRICT secret)
 {
     XXH_ASSERT((((size_t)acc) & 15) == 0);
 
@@ -1341,10 +1348,12 @@ XXH3_scrambleAcc(void* XXH_RESTRICT acc, const void* XXH_RESTRICT secret)
     }   }
 }
 
-#else   /* scalar variant of Accumulator - universal */
+#endif
+
+/* scalar variant of Accumulator - universal */
 
 XXH_FORCE_INLINE void
-XXH3_accumulate_512(      void* XXH_RESTRICT acc,
+XXH3_accumulate_512_scalar(void* XXH_RESTRICT acc,
                     const void* XXH_RESTRICT input,
                     const void* XXH_RESTRICT secret,
                     XXH3_accWidth_e accWidth)
@@ -1368,7 +1377,7 @@ XXH3_accumulate_512(      void* XXH_RESTRICT acc,
 }
 
 XXH_FORCE_INLINE void
-XXH3_scrambleAcc(void* XXH_RESTRICT acc, const void* XXH_RESTRICT secret)
+XXH3_scrambleAcc_scalar(void* XXH_RESTRICT acc, const void* XXH_RESTRICT secret)
 {
     XXH_ALIGN(XXH_ACC_ALIGN) xxh_u64* const xacc = (xxh_u64*) acc;   /* presumed aligned */
     const xxh_u8* const xsecret = (const xxh_u8*) secret;   /* no alignment restriction */
@@ -1384,21 +1393,109 @@ XXH3_scrambleAcc(void* XXH_RESTRICT acc, const void* XXH_RESTRICT secret)
     }
 }
 
-#endif
-
 
 
 #if (XXH_VECTOR == XXH_AVX512)
 
+XXH_FORCE_INLINE void
+XXH3_accumulate_512(void* XXH_RESTRICT acc,
+                    const void* XXH_RESTRICT input,
+                    const void* XXH_RESTRICT secret,
+                    XXH3_accWidth_e accWidth)
+{
+    XXH3_accumulate_512_avx512(acc, input, secret, accWidth);
+}
+
+XXH_FORCE_INLINE void
+XXH3_scrambleAcc(void* XXH_RESTRICT acc, const void* XXH_RESTRICT secret)
+{
+    XXH3_scrambleAcc_avx512(acc, secret);
+}
+
 #elif (XXH_VECTOR == XXH_AVX2)
+
+XXH_FORCE_INLINE void
+XXH3_accumulate_512(void* XXH_RESTRICT acc,
+                    const void* XXH_RESTRICT input,
+                    const void* XXH_RESTRICT secret,
+                    XXH3_accWidth_e accWidth)
+{
+    XXH3_accumulate_512_avx2(acc, input, secret, accWidth);
+}
+
+XXH_FORCE_INLINE void
+XXH3_scrambleAcc(void* XXH_RESTRICT acc, const void* XXH_RESTRICT secret)
+{
+    XXH3_scrambleAcc_avx2(acc, secret);
+}
 
 #elif (XXH_VECTOR == XXH_SSE2)
 
+XXH_FORCE_INLINE void
+XXH3_accumulate_512(void* XXH_RESTRICT acc,
+                    const void* XXH_RESTRICT input,
+                    const void* XXH_RESTRICT secret,
+                    XXH3_accWidth_e accWidth)
+{
+    XXH3_accumulate_512_sse2(acc, input, secret, accWidth);
+}
+
+XXH_FORCE_INLINE void
+XXH3_scrambleAcc(void* XXH_RESTRICT acc, const void* XXH_RESTRICT secret)
+{
+    XXH3_scrambleAcc_sse2(acc, secret);
+}
+
 #elif (XXH_VECTOR == XXH_NEON)
+
+XXH_FORCE_INLINE void
+XXH3_accumulate_512(void* XXH_RESTRICT acc,
+                    const void* XXH_RESTRICT input,
+                    const void* XXH_RESTRICT secret,
+                    XXH3_accWidth_e accWidth)
+{
+    XXH3_accumulate_512_neon(acc, input, secret, accWidth);
+}
+
+XXH_FORCE_INLINE void
+XXH3_scrambleAcc(void* XXH_RESTRICT acc, const void* XXH_RESTRICT secret)
+{
+    XXH3_scrambleAcc_neon(acc, secret);
+}
 
 #elif (XXH_VECTOR == XXH_VSX)
 
+XXH_FORCE_INLINE void
+XXH3_accumulate_512(void* XXH_RESTRICT acc,
+                    const void* XXH_RESTRICT input,
+                    const void* XXH_RESTRICT secret,
+                    XXH3_accWidth_e accWidth)
+{
+    XXH3_accumulate_512_vsx(acc, input, secret, accWidth);
+}
+
+XXH_FORCE_INLINE void
+XXH3_scrambleAcc(void* XXH_RESTRICT acc, const void* XXH_RESTRICT secret)
+{
+    XXH3_scrambleAcc_vsx(acc, secret);
+}
+
 #else   /* scalar variant of Scrambler - universal */
+
+XXH_FORCE_INLINE void
+XXH3_accumulate_512(void* XXH_RESTRICT acc,
+                    const void* XXH_RESTRICT input,
+                    const void* XXH_RESTRICT secret,
+                    XXH3_accWidth_e accWidth)
+{
+    XXH3_accumulate_512_scalar(acc, input, secret, accWidth);
+}
+
+XXH_FORCE_INLINE void
+XXH3_scrambleAcc(void* XXH_RESTRICT acc, const void* XXH_RESTRICT secret)
+{
+    XXH3_scrambleAcc_scalar(acc, secret);
+}
 
 #endif
 
