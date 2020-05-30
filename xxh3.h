@@ -920,7 +920,26 @@ XXH3_len_129to240_64b(const xxh_u8* XXH_RESTRICT input, size_t len,
 #  define ACC_NB XXH_ACC_NB
 #endif
 
+XXH_FORCE_INLINE void XXH_writeLE64(void* dst, xxh_u64 v64)
+{
+    if (!XXH_CPU_LITTLE_ENDIAN) v64 = XXH_swap64(v64);
+    memcpy(dst, &v64, sizeof(v64));
+}
+
 typedef enum { XXH3_acc_64bits, XXH3_acc_128bits } XXH3_accWidth_e;
+
+/* Some intrinsic functions below are meant to accept __int64 as argument,
+ * as documented in https://software.intel.com/sites/landingpage/IntrinsicsGuide/ .
+ * However, some environments do not define __int64 type, requiring a workaround.
+ */
+#if !defined (__VMS) \
+  && (defined (__cplusplus) \
+  || (defined (__STDC_VERSION__) && (__STDC_VERSION__ >= 199901L) /* C99 */) )
+    typedef int64_t xxh_i64;
+#else
+    /* the following type must have a width of 64-bit */
+    typedef long long xxh_i64;
+#endif
 
 /*
  * XXH3_accumulate_512 is the tightest loop for long inputs, and it is the most optimized.
@@ -1026,6 +1045,28 @@ XXH3_scrambleAcc_avx512(void* XXH_RESTRICT acc, const void* XXH_RESTRICT secret)
     }
 }
 
+XXH_FORCE_INLINE void XXH3_initCustomSecret_avx512(void* XXH_RESTRICT customSecret, xxh_u64 seed64)
+{
+    XXH_STATIC_ASSERT((XXH_SECRET_DEFAULT_SIZE & 63) == 0);
+    XXH_STATIC_ASSERT(XXH_SEC_ALIGN <= 64);
+    (void)(&XXH_writeLE64);
+    {   int const nbRounds = XXH_SECRET_DEFAULT_SIZE / sizeof(__m512i);
+        __m512i const seed = _mm512_mask_set1_epi64(_mm512_set1_epi64((xxh_i64)seed64), 0xAA, -(xxh_i64)seed64);
+
+        XXH_ALIGN(64) const __m512i* const src  = (const __m512i*) XXH3_kSecret;
+        XXH_ALIGN(64)       __m512i* const dest = (      __m512i*) customSecret;
+        int i;
+        for (i=0; i < nbRounds; ++i) {
+            // GCC has a bug, _mm512_stream_load_si512 accepts 'void*', not 'void const*',
+            // this will warn "discards ‘const’ qualifier".
+            union {
+                XXH_ALIGN(64) const __m512i* const cp;
+                XXH_ALIGN(64) void* const p;
+            } const remote_const_void = { .cp = src + i };
+            dest[i] = _mm512_add_epi64(_mm512_stream_load_si512(remote_const_void.p), seed);
+    }   }
+}
+
 #endif
 
 #if defined(__AVX2__)
@@ -1098,6 +1139,41 @@ XXH3_scrambleAcc_avx2(void* XXH_RESTRICT acc, const void* XXH_RESTRICT secret)
             __m256i const prod_hi     = _mm256_mul_epu32     (data_key_hi, prime32);
             xacc[i] = _mm256_add_epi64(prod_lo, _mm256_slli_epi64(prod_hi, 32));
         }
+    }
+}
+
+XXH_FORCE_INLINE void XXH3_initCustomSecret_avx2(void* XXH_RESTRICT customSecret, xxh_u64 seed64)
+{
+    XXH_STATIC_ASSERT((XXH_SECRET_DEFAULT_SIZE & 31) == 0);
+    XXH_STATIC_ASSERT((XXH_SECRET_DEFAULT_SIZE / sizeof(__m256i)) == 6);
+    XXH_STATIC_ASSERT(XXH_SEC_ALIGN <= 64);
+    (void)(&XXH_writeLE64);
+    XXH_PREFETCH(customSecret);
+    {   __m256i const seed = _mm256_set_epi64x(-(xxh_i64)seed64, (xxh_i64)seed64, -(xxh_i64)seed64, (xxh_i64)seed64);
+
+        XXH_ALIGN(64) const __m256i* const src  = (const __m256i*) XXH3_kSecret;
+        XXH_ALIGN(64)       __m256i*       dest = (      __m256i*) customSecret;
+
+#       if defined(__GNUC__) || defined(__clang__)
+        /*
+         * On GCC & Clang, marking 'dest' as modified will cause the compiler:
+         *   - do not extract the secret from sse registers in the internal loop
+         *   - use less common registers, and avoid pushing these reg into stack
+         * The asm hack causes Clang to assume that XXH3_kSecretPtr aliases with
+         * customSecret, and on aarch64, this prevented LDP from merging two
+         * loads together for free. Putting the loads together before the stores
+         * properly generates LDP.
+         */
+        __asm__("" : "+r" (dest));
+#       endif
+
+        /* GCC -O2 need unroll loop manually */
+        dest[0] = _mm256_add_epi64(_mm256_stream_load_si256(src+0), seed);
+        dest[1] = _mm256_add_epi64(_mm256_stream_load_si256(src+1), seed);
+        dest[2] = _mm256_add_epi64(_mm256_stream_load_si256(src+2), seed);
+        dest[3] = _mm256_add_epi64(_mm256_stream_load_si256(src+3), seed);
+        dest[4] = _mm256_add_epi64(_mm256_stream_load_si256(src+4), seed);
+        dest[5] = _mm256_add_epi64(_mm256_stream_load_si256(src+5), seed);
     }
 }
 
@@ -1175,6 +1251,37 @@ XXH3_scrambleAcc_sse2(void* XXH_RESTRICT acc, const void* XXH_RESTRICT secret)
             xacc[i] = _mm_add_epi64(prod_lo, _mm_slli_epi64(prod_hi, 32));
         }
     }
+}
+
+XXH_FORCE_INLINE void XXH3_initCustomSecret_sse2(void* XXH_RESTRICT customSecret, xxh_u64 seed64)
+{
+    XXH_STATIC_ASSERT((XXH_SECRET_DEFAULT_SIZE & 15) == 0);
+    (void)(&XXH_writeLE64);
+    {   int const nbRounds = XXH_SECRET_DEFAULT_SIZE / sizeof(__m128i);
+
+#       if defined(_MSC_VER) && defined(_M_IX86) && _MSC_VER < 1900
+        // MSVC 32bit mode does not support _mm_set_epi64x before 2015
+        XXH_ALIGN(16) const xxh_i64 seed64x2[2] = { (xxh_i64)seed64, -(xxh_i64)seed64 };
+        __m128i const seed = _mm_load_si128((__m128i const*)seed64x2);
+#       else
+        __m128i const seed = _mm_set_epi64x(-(xxh_i64)seed64, (xxh_i64)seed64);
+#       endif
+        int i;
+
+        XXH_ALIGN(64)        const float* const src  = (float const*) XXH3_kSecret;
+        XXH_ALIGN(XXH_SEC_ALIGN) __m128i*       dest = (__m128i*) customSecret;
+#       if defined(__GNUC__) || defined(__clang__)
+        /*
+         * On GCC & Clang, marking 'dest' as modified will cause the compiler:
+         *   - do not extract the secret from sse registers in the internal loop
+         *   - use less common registers, and avoid pushing these reg into stack
+         */
+        __asm__("" : "+r" (dest));
+#       endif
+
+        for (i=0; i < nbRounds; ++i) {
+            dest[i] = _mm_add_epi64(_mm_castps_si128(_mm_load_ps(src+i*4)), seed);
+    }   }
 }
 
 #endif
@@ -1393,37 +1500,107 @@ XXH3_scrambleAcc_scalar(void* XXH_RESTRICT acc, const void* XXH_RESTRICT secret)
     }
 }
 
+XXH_FORCE_INLINE void
+XXH3_initCustomSecret_scalar(void* XXH_RESTRICT customSecret, xxh_u64 seed64)
+{
+    /*
+     * We need a separate pointer for the hack below,
+     * which requires a non-const pointer.
+     * Any decent compiler will optimize this out otherwise.
+     */
+    const xxh_u8* kSecretPtr = XXH3_kSecret;
+    XXH_STATIC_ASSERT((XXH_SECRET_DEFAULT_SIZE & 15) == 0);
+
+#if defined(__clang__) && defined(__aarch64__)
+    /*
+     * UGLY HACK:
+     * Clang generates a bunch of MOV/MOVK pairs for aarch64, and they are
+     * placed sequentially, in order, at the top of the unrolled loop.
+     *
+     * While MOVK is great for generating constants (2 cycles for a 64-bit
+     * constant compared to 4 cycles for LDR), long MOVK chains stall the
+     * integer pipelines:
+     *   I   L   S
+     * MOVK
+     * MOVK
+     * MOVK
+     * MOVK
+     * ADD
+     * SUB      STR
+     *          STR
+     * By forcing loads from memory (as the asm line causes Clang to assume
+     * that XXH3_kSecretPtr has been changed), the pipelines are used more
+     * efficiently:
+     *   I   L   S
+     *      LDR
+     *  ADD LDR
+     *  SUB     STR
+     *          STR
+     * XXH3_64bits_withSeed, len == 256, Snapdragon 835
+     *   without hack: 2654.4 MB/s
+     *   with hack:    3202.9 MB/s
+     */
+    __asm__("" : "+r" (kSecretPtr));
+#endif
+    /*
+     * Note: in debug mode, this overrides the asm optimization
+     * and Clang will emit MOVK chains again.
+     */
+    XXH_ASSERT(kSecretPtr == XXH3_kSecret);
+
+    {   int const nbRounds = XXH_SECRET_DEFAULT_SIZE / 16;
+        int i;
+        for (i=0; i < nbRounds; i++) {
+            /*
+             * The asm hack causes Clang to assume that kSecretPtr aliases with
+             * customSecret, and on aarch64, this prevented LDP from merging two
+             * loads together for free. Putting the loads together before the stores
+             * properly generates LDP.
+             */
+            xxh_u64 lo = XXH_readLE64(kSecretPtr + 16*i)     + seed64;
+            xxh_u64 hi = XXH_readLE64(kSecretPtr + 16*i + 8) - seed64;
+            XXH_writeLE64((xxh_u8*)customSecret + 16*i,     lo);
+            XXH_writeLE64((xxh_u8*)customSecret + 16*i + 8, hi);
+    }   }
+}
+
 
 
 #if (XXH_VECTOR == XXH_AVX512)
 
 #define XXH3_accumulate_512 XXH3_accumulate_512_avx512
 #define XXH3_scrambleAcc    XXH3_scrambleAcc_avx512
+#define XXH3_initCustomSecret XXH3_initCustomSecret_avx512
 
 #elif (XXH_VECTOR == XXH_AVX2)
 
 #define XXH3_accumulate_512 XXH3_accumulate_512_avx2
 #define XXH3_scrambleAcc    XXH3_scrambleAcc_avx2
+#define XXH3_initCustomSecret XXH3_initCustomSecret_avx2
 
 #elif (XXH_VECTOR == XXH_SSE2)
 
 #define XXH3_accumulate_512 XXH3_accumulate_512_sse2
 #define XXH3_scrambleAcc    XXH3_scrambleAcc_sse2
+#define XXH3_initCustomSecret XXH3_initCustomSecret_sse2
 
 #elif (XXH_VECTOR == XXH_NEON)
 
 #define XXH3_accumulate_512 XXH3_accumulate_512_neon
 #define XXH3_scrambleAcc    XXH3_scrambleAcc_neon
+#define XXH3_initCustomSecret XXH3_initCustomSecret_scalar
 
 #elif (XXH_VECTOR == XXH_VSX)
 
 #define XXH3_accumulate_512 XXH3_accumulate_512_vsx
 #define XXH3_scrambleAcc    XXH3_scrambleAcc_vsx
+#define XXH3_initCustomSecret XXH3_initCustomSecret_scalar
 
 #else /* scalar */
 
 #define XXH3_accumulate_512 XXH3_accumulate_512_scalar
 #define XXH3_scrambleAcc    XXH3_scrambleAcc_scalar
+#define XXH3_initCustomSecret XXH3_initCustomSecret_scalar
 
 #endif
 
@@ -1549,180 +1726,6 @@ XXH3_hashLong_64b_internal(const xxh_u8* XXH_RESTRICT input, size_t len,
 #define XXH_SECRET_MERGEACCS_START 11
     XXH_ASSERT(secretSize >= sizeof(acc) + XXH_SECRET_MERGEACCS_START);
     return XXH3_mergeAccs(acc, secret + XXH_SECRET_MERGEACCS_START, (xxh_u64)len * XXH_PRIME64_1);
-}
-
-XXH_FORCE_INLINE void XXH_writeLE64(void* dst, xxh_u64 v64)
-{
-    if (!XXH_CPU_LITTLE_ENDIAN) v64 = XXH_swap64(v64);
-    memcpy(dst, &v64, sizeof(v64));
-}
-
-/* Several intrinsic functions below are supposed to accept __int64 as argument,
- * as documented in https://software.intel.com/sites/landingpage/IntrinsicsGuide/ .
- * However, several environments do not define __int64 type,
- * requiring a workaround.
- */
-#if !defined (__VMS) \
-  && (defined (__cplusplus) \
-  || (defined (__STDC_VERSION__) && (__STDC_VERSION__ >= 199901L) /* C99 */) )
-    typedef int64_t xxh_i64;
-#else
-    /* the following type must have a width of 64-bit */
-    typedef long long xxh_i64;
-#endif
-
-/* XXH3_initCustomSecret() :
- * destination `customSecret` is presumed allocated and same size as `XXH3_kSecret`.
- */
-XXH_FORCE_INLINE void XXH3_initCustomSecret(void* XXH_RESTRICT customSecret, xxh_u64 seed64)
-{
-#if (XXH_VECTOR == XXH_AVX512)
-
-    XXH_STATIC_ASSERT((XXH_SECRET_DEFAULT_SIZE & 63) == 0);
-    XXH_STATIC_ASSERT(XXH_SEC_ALIGN <= 64);
-    (void)(&XXH_writeLE64);
-    {   int const nbRounds = XXH_SECRET_DEFAULT_SIZE / sizeof(__m512i);
-        __m512i const seed = _mm512_mask_set1_epi64(_mm512_set1_epi64((xxh_i64)seed64), 0xAA, -(xxh_i64)seed64);
-
-        XXH_ALIGN(64) const __m512i* const src  = (const __m512i*) XXH3_kSecret;
-        XXH_ALIGN(64)       __m512i* const dest = (      __m512i*) customSecret;
-        int i;
-        for (i=0; i < nbRounds; ++i) {
-            // GCC has a bug, _mm512_stream_load_si512 accepts 'void*', not 'void const*',
-            // this will warn "discards ‘const’ qualifier".
-            union {
-                XXH_ALIGN(64) const __m512i* const cp;
-                XXH_ALIGN(64) void* const p;
-            } const remote_const_void = { .cp = src + i };
-            dest[i] = _mm512_add_epi64(_mm512_stream_load_si512(remote_const_void.p), seed);
-    }   }
-
-#elif (XXH_VECTOR == XXH_AVX2)
-
-    XXH_STATIC_ASSERT((XXH_SECRET_DEFAULT_SIZE & 31) == 0);
-    XXH_STATIC_ASSERT((XXH_SECRET_DEFAULT_SIZE / sizeof(__m256i)) == 6);
-    XXH_STATIC_ASSERT(XXH_SEC_ALIGN <= 64);
-    (void)(&XXH_writeLE64);
-    XXH_PREFETCH(customSecret);
-    {   __m256i const seed = _mm256_set_epi64x(-(xxh_i64)seed64, (xxh_i64)seed64, -(xxh_i64)seed64, (xxh_i64)seed64);
-
-        XXH_ALIGN(64) const __m256i* const src  = (const __m256i*) XXH3_kSecret;
-        XXH_ALIGN(64)       __m256i*       dest = (      __m256i*) customSecret;
-
-#       if defined(__GNUC__) || defined(__clang__)
-        /*
-         * On GCC & Clang, marking 'dest' as modified will cause the compiler:
-         *   - do not extract the secret from sse registers in the internal loop
-         *   - use less common registers, and avoid pushing these reg into stack
-         * The asm hack causes Clang to assume that XXH3_kSecretPtr aliases with
-         * customSecret, and on aarch64, this prevented LDP from merging two
-         * loads together for free. Putting the loads together before the stores
-         * properly generates LDP.
-         */
-        __asm__("" : "+r" (dest));
-#       endif
-
-        // GCC -O2 need unroll loop manually
-        dest[0] = _mm256_add_epi64(_mm256_stream_load_si256(src+0), seed);
-        dest[1] = _mm256_add_epi64(_mm256_stream_load_si256(src+1), seed);
-        dest[2] = _mm256_add_epi64(_mm256_stream_load_si256(src+2), seed);
-        dest[3] = _mm256_add_epi64(_mm256_stream_load_si256(src+3), seed);
-        dest[4] = _mm256_add_epi64(_mm256_stream_load_si256(src+4), seed);
-        dest[5] = _mm256_add_epi64(_mm256_stream_load_si256(src+5), seed);
-    }
-
-#elif (XXH_VECTOR == XXH_SSE2)
-
-    XXH_STATIC_ASSERT((XXH_SECRET_DEFAULT_SIZE & 15) == 0);
-    (void)(&XXH_writeLE64);
-    {   int const nbRounds = XXH_SECRET_DEFAULT_SIZE / sizeof(__m128i);
-
-#       if defined(_MSC_VER) && defined(_M_IX86) && _MSC_VER < 1900
-        // MSVC 32bit mode does not support _mm_set_epi64x before 2015
-        XXH_ALIGN(16) const xxh_i64 seed64x2[2] = { (xxh_i64)seed64, -(xxh_i64)seed64 };
-        __m128i const seed = _mm_load_si128((__m128i const*)seed64x2);
-#       else
-        __m128i const seed = _mm_set_epi64x(-(xxh_i64)seed64, (xxh_i64)seed64);
-#       endif
-        int i;
-
-        XXH_ALIGN(64)        const float* const src  = (float const*) XXH3_kSecret;
-        XXH_ALIGN(XXH_SEC_ALIGN) __m128i*       dest = (__m128i*) customSecret;
-#       if defined(__GNUC__) || defined(__clang__)
-        /*
-         * On GCC & Clang, marking 'dest' as modified will cause the compiler:
-         *   - do not extract the secret from sse registers in the internal loop
-         *   - use less common registers, and avoid pushing these reg into stack
-         */
-        __asm__("" : "+r" (dest));
-#       endif
-
-        for (i=0; i < nbRounds; ++i) {
-            dest[i] = _mm_add_epi64(_mm_castps_si128(_mm_load_ps(src+i*4)), seed);
-    }   }
-
-#else  /* scalar code path */
-
-    /*
-     * We need a separate pointer for the hack below,
-     * which requires a non-const pointer.
-     * Any decent compiler will optimize this out otherwise.
-     */
-    const xxh_u8* kSecretPtr = XXH3_kSecret;
-    XXH_STATIC_ASSERT((XXH_SECRET_DEFAULT_SIZE & 15) == 0);
-
-#if defined(__clang__) && defined(__aarch64__)
-    /*
-     * UGLY HACK:
-     * Clang generates a bunch of MOV/MOVK pairs for aarch64, and they are
-     * placed sequentially, in order, at the top of the unrolled loop.
-     *
-     * While MOVK is great for generating constants (2 cycles for a 64-bit
-     * constant compared to 4 cycles for LDR), long MOVK chains stall the
-     * integer pipelines:
-     *   I   L   S
-     * MOVK
-     * MOVK
-     * MOVK
-     * MOVK
-     * ADD
-     * SUB      STR
-     *          STR
-     * By forcing loads from memory (as the asm line causes Clang to assume
-     * that XXH3_kSecretPtr has been changed), the pipelines are used more
-     * efficiently:
-     *   I   L   S
-     *      LDR
-     *  ADD LDR
-     *  SUB     STR
-     *          STR
-     * XXH3_64bits_withSeed, len == 256, Snapdragon 835
-     *   without hack: 2654.4 MB/s
-     *   with hack:    3202.9 MB/s
-     */
-    __asm__("" : "+r" (kSecretPtr));
-#endif
-    /*
-     * Note: in debug mode, this overrides the asm optimization
-     * and Clang will emit MOVK chains again.
-     */
-    XXH_ASSERT(kSecretPtr == XXH3_kSecret);
-
-    {   int const nbRounds = XXH_SECRET_DEFAULT_SIZE / 16;
-        int i;
-        for (i=0; i < nbRounds; i++) {
-            /*
-             * The asm hack causes Clang to assume that kSecretPtr aliases with
-             * customSecret, and on aarch64, this prevented LDP from merging two
-             * loads together for free. Putting the loads together before the stores
-             * properly generates LDP.
-             */
-            xxh_u64 lo = XXH_readLE64(kSecretPtr + 16*i)     + seed64;
-            xxh_u64 hi = XXH_readLE64(kSecretPtr + 16*i + 8) - seed64;
-            XXH_writeLE64((xxh_u8*)customSecret + 16*i,     lo);
-            XXH_writeLE64((xxh_u8*)customSecret + 16*i + 8, hi);
-    }   }
-#endif
 }
 
 
