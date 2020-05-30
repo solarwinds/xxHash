@@ -848,29 +848,29 @@ static void* XXH_memcpy(void* dest, const void* src, size_t size)
 *  Compiler Specific Options
 ***************************************/
 #ifdef _MSC_VER /* Visual Studio warning fix */
-#  pragma warning(disable : 4127) /* disable: C4127: conditional expression is constant */
+#  pragma warning(disable : 4127) /* C4127: conditional expression is constant */
 #endif
 
-#if XXH_NO_INLINE_HINTS /* disable inlining hints */
-#  define XXH_FORCE_INLINE static
-#  define XXH_NO_INLINE static
-#elif defined(_MSC_VER)    /* Visual Studio */
-#  define XXH_FORCE_INLINE static __forceinline
-#  define XXH_NO_INLINE static __declspec(noinline)
-#else
-#  if defined (__cplusplus) \
-    || defined (__STDC_VERSION__) && __STDC_VERSION__ >= 199901L   /* C99 */
-#    ifdef __GNUC__
-#      define XXH_FORCE_INLINE static inline __attribute__((always_inline))
-#      define XXH_NO_INLINE static __attribute__((noinline))
-#    else
-#      define XXH_FORCE_INLINE static inline
-#      define XXH_NO_INLINE static
-#    endif
+#if XXH_NO_INLINE_HINTS  /* disable inlining hints */
+#  if defined(__GNUC__)
+#    define XXH_FORCE_INLINE static __attribute__((unused))
 #  else
 #    define XXH_FORCE_INLINE static
-#    define XXH_NO_INLINE static
-#  endif /* __STDC_VERSION__ */
+#  endif
+#  define XXH_NO_INLINE static
+#elif defined(_MSC_VER)  /* Visual Studio */
+#  define XXH_FORCE_INLINE static __forceinline
+#  define XXH_NO_INLINE static __declspec(noinline)
+#elif defined(__GNUC__)
+#  define XXH_FORCE_INLINE static __attribute__((always_inline, unused))
+#  define XXH_NO_INLINE static __attribute__((noinline))
+#elif defined (__cplusplus) \
+  || (defined (__STDC_VERSION__) && (__STDC_VERSION__ >= 199901L))   /* C99 */
+#  define XXH_FORCE_INLINE static inline
+#  define XXH_NO_INLINE static
+#else
+#  define XXH_FORCE_INLINE static
+#  define XXH_NO_INLINE static
 #endif
 
 
