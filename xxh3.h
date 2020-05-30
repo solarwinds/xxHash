@@ -1350,7 +1350,7 @@ XXH3_scrambleAcc_vsx(void* XXH_RESTRICT acc, const void* XXH_RESTRICT secret)
 
 #endif
 
-/* scalar variant of Accumulator - universal */
+/* scalar variant - universal */
 
 XXH_FORCE_INLINE void
 XXH3_accumulate_512_scalar(void* XXH_RESTRICT acc,
@@ -1397,105 +1397,33 @@ XXH3_scrambleAcc_scalar(void* XXH_RESTRICT acc, const void* XXH_RESTRICT secret)
 
 #if (XXH_VECTOR == XXH_AVX512)
 
-XXH_FORCE_INLINE void
-XXH3_accumulate_512(void* XXH_RESTRICT acc,
-                    const void* XXH_RESTRICT input,
-                    const void* XXH_RESTRICT secret,
-                    XXH3_accWidth_e accWidth)
-{
-    XXH3_accumulate_512_avx512(acc, input, secret, accWidth);
-}
-
-XXH_FORCE_INLINE void
-XXH3_scrambleAcc(void* XXH_RESTRICT acc, const void* XXH_RESTRICT secret)
-{
-    XXH3_scrambleAcc_avx512(acc, secret);
-}
+#define XXH3_accumulate_512 XXH3_accumulate_512_avx512
+#define XXH3_scrambleAcc    XXH3_scrambleAcc_avx512
 
 #elif (XXH_VECTOR == XXH_AVX2)
 
-XXH_FORCE_INLINE void
-XXH3_accumulate_512(void* XXH_RESTRICT acc,
-                    const void* XXH_RESTRICT input,
-                    const void* XXH_RESTRICT secret,
-                    XXH3_accWidth_e accWidth)
-{
-    XXH3_accumulate_512_avx2(acc, input, secret, accWidth);
-}
-
-XXH_FORCE_INLINE void
-XXH3_scrambleAcc(void* XXH_RESTRICT acc, const void* XXH_RESTRICT secret)
-{
-    XXH3_scrambleAcc_avx2(acc, secret);
-}
+#define XXH3_accumulate_512 XXH3_accumulate_512_avx2
+#define XXH3_scrambleAcc    XXH3_scrambleAcc_avx2
 
 #elif (XXH_VECTOR == XXH_SSE2)
 
-XXH_FORCE_INLINE void
-XXH3_accumulate_512(void* XXH_RESTRICT acc,
-                    const void* XXH_RESTRICT input,
-                    const void* XXH_RESTRICT secret,
-                    XXH3_accWidth_e accWidth)
-{
-    XXH3_accumulate_512_sse2(acc, input, secret, accWidth);
-}
-
-XXH_FORCE_INLINE void
-XXH3_scrambleAcc(void* XXH_RESTRICT acc, const void* XXH_RESTRICT secret)
-{
-    XXH3_scrambleAcc_sse2(acc, secret);
-}
+#define XXH3_accumulate_512 XXH3_accumulate_512_sse2
+#define XXH3_scrambleAcc    XXH3_scrambleAcc_sse2
 
 #elif (XXH_VECTOR == XXH_NEON)
 
-XXH_FORCE_INLINE void
-XXH3_accumulate_512(void* XXH_RESTRICT acc,
-                    const void* XXH_RESTRICT input,
-                    const void* XXH_RESTRICT secret,
-                    XXH3_accWidth_e accWidth)
-{
-    XXH3_accumulate_512_neon(acc, input, secret, accWidth);
-}
-
-XXH_FORCE_INLINE void
-XXH3_scrambleAcc(void* XXH_RESTRICT acc, const void* XXH_RESTRICT secret)
-{
-    XXH3_scrambleAcc_neon(acc, secret);
-}
+#define XXH3_accumulate_512 XXH3_accumulate_512_neon
+#define XXH3_scrambleAcc    XXH3_scrambleAcc_neon
 
 #elif (XXH_VECTOR == XXH_VSX)
 
-XXH_FORCE_INLINE void
-XXH3_accumulate_512(void* XXH_RESTRICT acc,
-                    const void* XXH_RESTRICT input,
-                    const void* XXH_RESTRICT secret,
-                    XXH3_accWidth_e accWidth)
-{
-    XXH3_accumulate_512_vsx(acc, input, secret, accWidth);
-}
+#define XXH3_accumulate_512 XXH3_accumulate_512_vsx
+#define XXH3_scrambleAcc    XXH3_scrambleAcc_vsx
 
-XXH_FORCE_INLINE void
-XXH3_scrambleAcc(void* XXH_RESTRICT acc, const void* XXH_RESTRICT secret)
-{
-    XXH3_scrambleAcc_vsx(acc, secret);
-}
+#else /* scalar */
 
-#else   /* scalar variant of Scrambler - universal */
-
-XXH_FORCE_INLINE void
-XXH3_accumulate_512(void* XXH_RESTRICT acc,
-                    const void* XXH_RESTRICT input,
-                    const void* XXH_RESTRICT secret,
-                    XXH3_accWidth_e accWidth)
-{
-    XXH3_accumulate_512_scalar(acc, input, secret, accWidth);
-}
-
-XXH_FORCE_INLINE void
-XXH3_scrambleAcc(void* XXH_RESTRICT acc, const void* XXH_RESTRICT secret)
-{
-    XXH3_scrambleAcc_scalar(acc, secret);
-}
+#define XXH3_accumulate_512 XXH3_accumulate_512_scalar
+#define XXH3_scrambleAcc    XXH3_scrambleAcc_scalar
 
 #endif
 
