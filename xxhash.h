@@ -1,7 +1,7 @@
 /*
  * xxHash - Extremely Fast Hash algorithm
  * Header File
- * Copyright (C) 2012-present, Yann Collet.
+ * Copyright (C) 2012-2020 Yann Collet
  *
  * BSD 2-Clause License (https://www.opensource.org/licenses/bsd-license.php)
  *
@@ -221,7 +221,7 @@ extern "C" {
 ***************************************/
 #define XXH_VERSION_MAJOR    0
 #define XXH_VERSION_MINOR    7
-#define XXH_VERSION_RELEASE  3
+#define XXH_VERSION_RELEASE  4
 #define XXH_VERSION_NUMBER  (XXH_VERSION_MAJOR *100*100 + XXH_VERSION_MINOR *100 + XXH_VERSION_RELEASE)
 XXH_PUBLIC_API unsigned XXH_versionNumber (void);
 
@@ -260,6 +260,10 @@ typedef enum { XXH_OK=0, XXH_ERROR } XXH_errorcode;
  *  The memory between input & input+length must be valid (allocated and read-accessible).
  *  "seed" can be used to alter the result predictably.
  *  Speed on Core 2 Duo @ 3 GHz (single thread, SMHasher benchmark): 5.4 GB/s
+ *
+ * Note: XXH3 provides competitive speed for both 32-bit and 64-bit systems,
+ * and offers true 64/128 bit hash results. It provides a superior level of
+ * dispersion, and greatly reduces the risks of collisions.
  */
 XXH_PUBLIC_API XXH32_hash_t XXH32 (const void* input, size_t length, XXH32_hash_t seed);
 
@@ -342,8 +346,13 @@ XXH_PUBLIC_API XXH32_hash_t XXH32_hashFromCanonical(const XXH32_canonical_t* src
  * Returns the 64-bit hash of sequence of length @length stored at memory
  * address @input.
  * @seed can be used to alter the result predictably.
+ *
  * This function usually runs faster on 64-bit systems, but slower on 32-bit
  * systems (see benchmark).
+ *
+ * Note: XXH3 provides competitive speed for both 32-bit and 64-bit systems,
+ * and offers true 64/128 bit hash results. It provides a superior level of
+ * dispersion, and greatly reduces the risks of collisions.
  */
 XXH_PUBLIC_API XXH64_hash_t XXH64 (const void* input, size_t length, XXH64_hash_t seed);
 
@@ -439,11 +448,11 @@ struct XXH64_state_s {
  * It benefits greatly from SIMD and 64-bit arithmetic, but does not require it.
  *
  * Almost all 32-bit and 64-bit targets that can run XXH32 smoothly can run
- * XXH3 at usable speeds, even if XXH64 runs slowly. Further details are
+ * XXH3 at competitive speeds, even if XXH64 runs slowly. Further details are
  * explained in the implementation.
  *
- * Optimized implementations are provided for AVX2, SSE2, NEON, POWER8, ZVector,
- * and scalar targets. This can be controlled with the XXH_VECTOR macro.
+ * Optimized implementations are provided for AVX512, AVX2, SSE2, NEON, POWER8,
+ * ZVector and scalar targets. This can be controlled with the XXH_VECTOR macro.
  *
  * XXH3 offers 2 variants, _64bits and _128bits.
  * When only 64 bits are needed, prefer calling the _64bits variant, as it
@@ -461,6 +470,15 @@ struct XXH64_state_s {
  * ephemeral data (local sessions).
  *
  * Avoid storing values in long-term storage until the algorithm is finalized.
+ *
+ * Since v0.7.3, XXH3 has reached "release candidate" status, meaning that, if
+ * everything remains fine, its current format will be "frozen" and become the
+ * final one.
+ *
+ * After which, return values of XXH3 and XXH128 will no longer change in
+ * future versions.
+ *
+ * XXH3's return values will be officially finalized upon reaching v0.8.0.
  *
  * The API supports one-shot hashing, streaming mode, and custom secrets.
  */
@@ -813,8 +831,10 @@ XXH_PUBLIC_API XXH128_hash_t XXH128_hashFromCanonical(const XXH128_canonical_t* 
  * routines for malloc() and free()
  */
 #include <stdlib.h>
+
 static void* XXH_malloc(size_t s) { return malloc(s); }
-static void  XXH_free  (void* p)  { free(p); }
+static void XXH_free(void* p) { free(p); }
+
 /*! and for memcpy() */
 #include <string.h>
 static void* XXH_memcpy(void* dest, const void* src, size_t size)
@@ -875,7 +895,7 @@ static void* XXH_memcpy(void* dest, const void* src, size_t size)
 #endif
 
 /* note: use after variable declarations */
-#define XXH_STATIC_ASSERT(c)  { enum { XXH_sa = 1/(int)(!!(c)) }; }
+#define XXH_STATIC_ASSERT(c)  do { enum { XXH_sa = 1/(int)(!!(c)) }; } while (0)
 
 
 /* *************************************
@@ -1151,14 +1171,16 @@ static xxh_u32 XXH32_avalanche(xxh_u32 h32)
 static xxh_u32
 XXH32_finalize(xxh_u32 h32, const xxh_u8* ptr, size_t len, XXH_alignment align)
 {
-#define PROCESS1               \
-    h32 += (*ptr++) * PRIME32_5; \
-    h32 = XXH_rotl32(h32, 11) * PRIME32_1 ;
+#define PROCESS1 do {                           \
+    h32 += (*ptr++) * PRIME32_5;                \
+    h32 = XXH_rotl32(h32, 11) * PRIME32_1;      \
+} while (0)
 
-#define PROCESS4                         \
-    h32 += XXH_get32bits(ptr) * PRIME32_3; \
-    ptr+=4;                                \
-    h32  = XXH_rotl32(h32, 17) * PRIME32_4 ;
+#define PROCESS4 do {                           \
+    h32 += XXH_get32bits(ptr) * PRIME32_3;      \
+    ptr += 4;                                   \
+    h32  = XXH_rotl32(h32, 17) * PRIME32_4;     \
+} while (0)
 
     /* Compact rerolled version */
     if (XXH_REROLL) {
@@ -1606,21 +1628,23 @@ static xxh_u64 XXH64_avalanche(xxh_u64 h64)
 static xxh_u64
 XXH64_finalize(xxh_u64 h64, const xxh_u8* ptr, size_t len, XXH_alignment align)
 {
-#define PROCESS1_64            \
-    h64 ^= (*ptr++) * PRIME64_5; \
-    h64 = XXH_rotl64(h64, 11) * PRIME64_1;
+#define PROCESS1_64 do {                                   \
+    h64 ^= (*ptr++) * PRIME64_5;                           \
+    h64 = XXH_rotl64(h64, 11) * PRIME64_1;                 \
+} while (0)
 
-#define PROCESS4_64          \
-    h64 ^= (xxh_u64)(XXH_get32bits(ptr)) * PRIME64_1; \
-    ptr+=4;                    \
-    h64 = XXH_rotl64(h64, 23) * PRIME64_2 + PRIME64_3;
+#define PROCESS4_64 do {                                   \
+    h64 ^= (xxh_u64)(XXH_get32bits(ptr)) * PRIME64_1;      \
+    ptr += 4;                                              \
+    h64 = XXH_rotl64(h64, 23) * PRIME64_2 + PRIME64_3;     \
+} while (0)
 
-#define PROCESS8_64 {        \
+#define PROCESS8_64 do {                                   \
     xxh_u64 const k1 = XXH64_round(0, XXH_get64bits(ptr)); \
-    ptr+=8;                    \
-    h64 ^= k1;               \
-    h64  = XXH_rotl64(h64,27) * PRIME64_1 + PRIME64_4; \
-}
+    ptr += 8;                                              \
+    h64 ^= k1;                                             \
+    h64  = XXH_rotl64(h64,27) * PRIME64_1 + PRIME64_4;     \
+} while (0)
 
     /* Rerolled version for 32-bit targets is faster and much smaller. */
     if (XXH_REROLL || XXH_REROLL_XXH64) {
