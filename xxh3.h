@@ -329,6 +329,12 @@
 #  endif
 #endif
 
+#if XXH_VECTOR == XXH_SSE2 || XXH_VECTOR == XXH_AVX2 || XXH_VECTOR == XXH_AVX512
+#  define XXH_SEC_ALIGN XXH_ACC_ALIGN
+#else
+#  define XXH_SEC_ALIGN 8
+#endif
+
 /*
  * UGLY HACK:
  * GCC usually generates the best code with -O3 for xxHash.
@@ -530,7 +536,7 @@ XXH_FORCE_INLINE xxh_u64x2 XXH_vec_loadu(const void *ptr)
  /* s390x is always big endian, no issue on this platform */
 #  define XXH_vec_mulo vec_mulo
 #  define XXH_vec_mule vec_mule
-# elif defined(__clang__) && __has_builtin(__builtin_altivec_vmuleuw)
+# elif defined(__clang__) && XXH_HAS_BUILTIN(__builtin_altivec_vmuleuw)
 /* Clang has a better way to control this, we can just use the builtin which doesn't swap. */
 #  define XXH_vec_mulo __builtin_altivec_vmulouw
 #  define XXH_vec_mule __builtin_altivec_vmuleuw
@@ -580,7 +586,7 @@ XXH_FORCE_INLINE xxh_u64x2 XXH_vec_mule(xxh_u32x4 a, xxh_u32x4 b)
 #endif
 
 /* Pseudorandom secret taken directly from FARSH */
-XXH_ALIGN(64) static const xxh_u8 kSecret[XXH_SECRET_DEFAULT_SIZE] = {
+XXH_ALIGN(64) static const xxh_u8 XXH3_kSecret[XXH_SECRET_DEFAULT_SIZE] = {
     0xb8, 0xfe, 0x6c, 0x39, 0x23, 0xa4, 0x4b, 0xbe, 0x7c, 0x01, 0x81, 0x2c, 0xf7, 0x21, 0xad, 0x1c,
     0xde, 0xd4, 0x6d, 0xe9, 0x83, 0x90, 0x97, 0xdb, 0x72, 0x40, 0xa4, 0xa4, 0xb7, 0xb3, 0x67, 0x1f,
     0xcb, 0x79, 0xe6, 0x4e, 0xcc, 0xc0, 0xe5, 0x78, 0x82, 0x5a, 0xd0, 0x7d, 0xcc, 0xff, 0x72, 0x21,
@@ -595,6 +601,10 @@ XXH_ALIGN(64) static const xxh_u8 kSecret[XXH_SECRET_DEFAULT_SIZE] = {
     0x2b, 0x16, 0xbe, 0x58, 0x7d, 0x47, 0xa1, 0xfc, 0x8f, 0xf8, 0xb8, 0xd1, 0x7a, 0xd0, 0x31, 0xce,
     0x45, 0xcb, 0x3a, 0x8f, 0x95, 0x16, 0x04, 0x28, 0xaf, 0xd7, 0xfb, 0xca, 0xbb, 0x4b, 0x40, 0x7e,
 };
+
+#ifdef XXH_OLD_NAMES
+#  define kSecret XXH3_kSecret
+#endif
 
 /*
  * Calculates a 32-bit to 64-bit long multiply.
@@ -825,7 +835,7 @@ XXH3_len_1to3_64b(const xxh_u8* input, size_t len, const xxh_u8* secret, XXH64_h
                                | ((xxh_u32)c3 <<  0) | ((xxh_u32)len << 8);
         xxh_u64 const bitflip = (XXH_readLE32(secret) ^ XXH_readLE32(secret+4)) + seed;
         xxh_u64 const keyed = (xxh_u64)combined ^ bitflip;
-        xxh_u64 const mixed = keyed * PRIME64_1;
+        xxh_u64 const mixed = keyed * XXH_PRIME64_1;
         return XXH3_avalanche(mixed);
     }
 }
@@ -875,7 +885,7 @@ XXH3_len_0to16_64b(const xxh_u8* input, size_t len, const xxh_u8* secret, XXH64_
     {   if (XXH_likely(len >  8)) return XXH3_len_9to16_64b(input, len, secret, seed);
         if (XXH_likely(len >= 4)) return XXH3_len_4to8_64b(input, len, secret, seed);
         if (len) return XXH3_len_1to3_64b(input, len, secret, seed);
-        return XXH3_avalanche((PRIME64_1 + seed) ^ (XXH_readLE64(secret+56) ^ XXH_readLE64(secret+64)));
+        return XXH3_avalanche((XXH_PRIME64_1 + seed) ^ (XXH_readLE64(secret+56) ^ XXH_readLE64(secret+64)));
     }
 }
 
@@ -946,7 +956,7 @@ XXH3_len_17to128_64b(const xxh_u8* XXH_RESTRICT input, size_t len,
     XXH_ASSERT(secretSize >= XXH3_SECRET_SIZE_MIN); (void)secretSize;
     XXH_ASSERT(16 < len && len <= 128);
 
-    {   xxh_u64 acc = len * PRIME64_1;
+    {   xxh_u64 acc = len * XXH_PRIME64_1;
         if (len > 32) {
             if (len > 64) {
                 if (len > 96) {
@@ -979,7 +989,7 @@ XXH3_len_129to240_64b(const xxh_u8* XXH_RESTRICT input, size_t len,
     #define XXH3_MIDSIZE_STARTOFFSET 3
     #define XXH3_MIDSIZE_LASTOFFSET  17
 
-    {   xxh_u64 acc = len * PRIME64_1;
+    {   xxh_u64 acc = len * XXH_PRIME64_1;
         int const nbRounds = (int)len / 16;
         int i;
         for (i=0; i<8; i++) {
@@ -1024,11 +1034,35 @@ XXH3_len_129to240_64b(const xxh_u8* XXH_RESTRICT input, size_t len,
 
 /* ===    Long Keys    === */
 
-#define STRIPE_LEN 64
+#define XXH_STRIPE_LEN 64
 #define XXH_SECRET_CONSUME_RATE 8   /* nb of secret bytes consumed at each accumulation */
-#define ACC_NB (STRIPE_LEN / sizeof(xxh_u64))
+#define XXH_ACC_NB (XXH_STRIPE_LEN / sizeof(xxh_u64))
+
+#ifdef XXH_OLD_NAMES   /* legacy compatibility, will be removed in a future version */
+#  define STRIPE_LEN XXH_STRIPE_LEN
+#  define ACC_NB XXH_ACC_NB
+#endif
+
+XXH_FORCE_INLINE void XXH_writeLE64(void* dst, xxh_u64 v64)
+{
+    if (!XXH_CPU_LITTLE_ENDIAN) v64 = XXH_swap64(v64);
+    memcpy(dst, &v64, sizeof(v64));
+}
 
 typedef enum { XXH3_acc_64bits, XXH3_acc_128bits } XXH3_accWidth_e;
+
+/* Some intrinsic functions below are meant to accept __int64 as argument,
+ * as documented in https://software.intel.com/sites/landingpage/IntrinsicsGuide/ .
+ * However, some environments do not define __int64 type, requiring a workaround.
+ */
+#if !defined (__VMS) \
+  && (defined (__cplusplus) \
+  || (defined (__STDC_VERSION__) && (__STDC_VERSION__ >= 199901L) /* C99 */) )
+    typedef int64_t xxh_i64;
+#else
+    /* the following type must have a width of 64-bit */
+    typedef long long xxh_i64;
+#endif
 
 /*
  * XXH3_accumulate_512 is the tightest loop for long inputs, and it is the most optimized.
@@ -1052,16 +1086,16 @@ typedef enum { XXH3_acc_64bits, XXH3_acc_128bits } XXH3_accWidth_e;
  *
  * Both XXH3_64bits and XXH3_128bits use this subroutine.
  */
+#if defined(__AVX512F__)
+
 XXH_FORCE_INLINE void
-XXH3_accumulate_512(      void* XXH_RESTRICT acc,
+XXH3_accumulate_512_avx512(void* XXH_RESTRICT acc,
                     const void* XXH_RESTRICT input,
                     const void* XXH_RESTRICT secret,
                     XXH3_accWidth_e accWidth)
 {
-#if (XXH_VECTOR == XXH_AVX512)
-
     XXH_ASSERT((((size_t)acc) & 63) == 0);
-    XXH_STATIC_ASSERT(STRIPE_LEN == sizeof(__m512i));
+    XXH_STATIC_ASSERT(XXH_STRIPE_LEN == sizeof(__m512i));
     {   XXH_ALIGN(64) __m512i* const xacc    =       (__m512i *) acc;
 
         /* data_vec    = input[0]; */
@@ -1087,9 +1121,85 @@ XXH3_accumulate_512(      void* XXH_RESTRICT acc,
             *xacc = _mm512_add_epi64(product, sum);
         }
     }
+}
 
-#elif (XXH_VECTOR == XXH_AVX2)
+/*
+ * XXH3_scrambleAcc: Scrambles the accumulators to improve mixing.
+ *
+ * Multiplication isn't perfect, as explained by Google in HighwayHash:
+ *
+ *  // Multiplication mixes/scrambles bytes 0-7 of the 64-bit result to
+ *  // varying degrees. In descending order of goodness, bytes
+ *  // 3 4 2 5 1 6 0 7 have quality 228 224 164 160 100 96 36 32.
+ *  // As expected, the upper and lower bytes are much worse.
+ *
+ * Source: https://github.com/google/highwayhash/blob/0aaf66b/highwayhash/hh_avx2.h#L291
+ *
+ * Since our algorithm uses a pseudorandom secret to add some variance into the
+ * mix, we don't need to (or want to) mix as often or as much as HighwayHash does.
+ *
+ * This isn't as tight as XXH3_accumulate, but still written in SIMD to avoid
+ * extraction.
+ *
+ * Both XXH3_64bits and XXH3_128bits use this subroutine.
+ */
 
+XXH_FORCE_INLINE void
+XXH3_scrambleAcc_avx512(void* XXH_RESTRICT acc, const void* XXH_RESTRICT secret)
+{
+    XXH_ASSERT((((size_t)acc) & 63) == 0);
+    XXH_STATIC_ASSERT(XXH_STRIPE_LEN == sizeof(__m512i));
+    {   XXH_ALIGN(64) __m512i* const xacc = (__m512i*) acc;
+        const __m512i prime32 = _mm512_set1_epi32((int)XXH_PRIME32_1);
+
+        /* xacc[0] ^= (xacc[0] >> 47) */
+        __m512i const acc_vec     = *xacc;
+        __m512i const shifted     = _mm512_srli_epi64    (acc_vec, 47);
+        __m512i const data_vec    = _mm512_xor_si512     (acc_vec, shifted);
+        /* xacc[0] ^= secret; */
+        __m512i const key_vec     = _mm512_loadu_si512   (secret);
+        __m512i const data_key    = _mm512_xor_si512     (data_vec, key_vec);
+
+        /* xacc[0] *= XXH_PRIME32_1; */
+        __m512i const data_key_hi = _mm512_shuffle_epi32 (data_key, _MM_SHUFFLE(0, 3, 0, 1));
+        __m512i const prod_lo     = _mm512_mul_epu32     (data_key, prime32);
+        __m512i const prod_hi     = _mm512_mul_epu32     (data_key_hi, prime32);
+        *xacc = _mm512_add_epi64(prod_lo, _mm512_slli_epi64(prod_hi, 32));
+    }
+}
+
+XXH_FORCE_INLINE void XXH3_initCustomSecret_avx512(void* XXH_RESTRICT customSecret, xxh_u64 seed64)
+{
+    XXH_STATIC_ASSERT((XXH_SECRET_DEFAULT_SIZE & 63) == 0);
+    XXH_STATIC_ASSERT(XXH_SEC_ALIGN <= 64);
+    (void)(&XXH_writeLE64);
+    {   int const nbRounds = XXH_SECRET_DEFAULT_SIZE / sizeof(__m512i);
+        __m512i const seed = _mm512_mask_set1_epi64(_mm512_set1_epi64((xxh_i64)seed64), 0xAA, -(xxh_i64)seed64);
+
+        XXH_ALIGN(64) const __m512i* const src  = (const __m512i*) XXH3_kSecret;
+        XXH_ALIGN(64)       __m512i* const dest = (      __m512i*) customSecret;
+        int i;
+        for (i=0; i < nbRounds; ++i) {
+            // GCC has a bug, _mm512_stream_load_si512 accepts 'void*', not 'void const*',
+            // this will warn "discards ‘const’ qualifier".
+            union {
+                XXH_ALIGN(64) const __m512i* const cp;
+                XXH_ALIGN(64) void* const p;
+            } const remote_const_void = { .cp = src + i };
+            dest[i] = _mm512_add_epi64(_mm512_stream_load_si512(remote_const_void.p), seed);
+    }   }
+}
+
+#endif
+
+#if defined(__AVX2__)
+
+XXH_FORCE_INLINE void
+XXH3_accumulate_512_avx2( void* XXH_RESTRICT acc,
+                    const void* XXH_RESTRICT input,
+                    const void* XXH_RESTRICT secret,
+                    XXH3_accWidth_e accWidth)
+{
     XXH_ASSERT((((size_t)acc) & 31) == 0);
     {   XXH_ALIGN(32) __m256i* const xacc    =       (__m256i *) acc;
         /* Unaligned. This is mainly for pointer arithmetic, and because
@@ -1100,7 +1210,7 @@ XXH3_accumulate_512(      void* XXH_RESTRICT acc,
         const         __m256i* const xsecret = (const __m256i *) secret;
 
         size_t i;
-        for (i=0; i < STRIPE_LEN/sizeof(__m256i); i++) {
+        for (i=0; i < XXH_STRIPE_LEN/sizeof(__m256i); i++) {
             /* data_vec    = xinput[i]; */
             __m256i const data_vec    = _mm256_loadu_si256    (xinput+i);
             /* key_vec     = xsecret[i]; */
@@ -1124,9 +1234,82 @@ XXH3_accumulate_512(      void* XXH_RESTRICT acc,
                 xacc[i] = _mm256_add_epi64(product, sum);
             }
     }   }
+}
 
-#elif (XXH_VECTOR == XXH_SSE2)
+XXH_FORCE_INLINE void
+XXH3_scrambleAcc_avx2(void* XXH_RESTRICT acc, const void* XXH_RESTRICT secret)
+{
+    XXH_ASSERT((((size_t)acc) & 31) == 0);
+    {   XXH_ALIGN(32) __m256i* const xacc = (__m256i*) acc;
+        /* Unaligned. This is mainly for pointer arithmetic, and because
+         * _mm256_loadu_si256 requires a const __m256i * pointer for some reason. */
+        const         __m256i* const xsecret = (const __m256i *) secret;
+        const __m256i prime32 = _mm256_set1_epi32((int)XXH_PRIME32_1);
 
+        size_t i;
+        for (i=0; i < XXH_STRIPE_LEN/sizeof(__m256i); i++) {
+            /* xacc[i] ^= (xacc[i] >> 47) */
+            __m256i const acc_vec     = xacc[i];
+            __m256i const shifted     = _mm256_srli_epi64    (acc_vec, 47);
+            __m256i const data_vec    = _mm256_xor_si256     (acc_vec, shifted);
+            /* xacc[i] ^= xsecret; */
+            __m256i const key_vec     = _mm256_loadu_si256   (xsecret+i);
+            __m256i const data_key    = _mm256_xor_si256     (data_vec, key_vec);
+
+            /* xacc[i] *= XXH_PRIME32_1; */
+            __m256i const data_key_hi = _mm256_shuffle_epi32 (data_key, _MM_SHUFFLE(0, 3, 0, 1));
+            __m256i const prod_lo     = _mm256_mul_epu32     (data_key, prime32);
+            __m256i const prod_hi     = _mm256_mul_epu32     (data_key_hi, prime32);
+            xacc[i] = _mm256_add_epi64(prod_lo, _mm256_slli_epi64(prod_hi, 32));
+        }
+    }
+}
+
+XXH_FORCE_INLINE void XXH3_initCustomSecret_avx2(void* XXH_RESTRICT customSecret, xxh_u64 seed64)
+{
+    XXH_STATIC_ASSERT((XXH_SECRET_DEFAULT_SIZE & 31) == 0);
+    XXH_STATIC_ASSERT((XXH_SECRET_DEFAULT_SIZE / sizeof(__m256i)) == 6);
+    XXH_STATIC_ASSERT(XXH_SEC_ALIGN <= 64);
+    (void)(&XXH_writeLE64);
+    XXH_PREFETCH(customSecret);
+    {   __m256i const seed = _mm256_set_epi64x(-(xxh_i64)seed64, (xxh_i64)seed64, -(xxh_i64)seed64, (xxh_i64)seed64);
+
+        XXH_ALIGN(64) const __m256i* const src  = (const __m256i*) XXH3_kSecret;
+        XXH_ALIGN(64)       __m256i*       dest = (      __m256i*) customSecret;
+
+#       if defined(__GNUC__) || defined(__clang__)
+        /*
+         * On GCC & Clang, marking 'dest' as modified will cause the compiler:
+         *   - do not extract the secret from sse registers in the internal loop
+         *   - use less common registers, and avoid pushing these reg into stack
+         * The asm hack causes Clang to assume that XXH3_kSecretPtr aliases with
+         * customSecret, and on aarch64, this prevented LDP from merging two
+         * loads together for free. Putting the loads together before the stores
+         * properly generates LDP.
+         */
+        __asm__("" : "+r" (dest));
+#       endif
+
+        /* GCC -O2 need unroll loop manually */
+        dest[0] = _mm256_add_epi64(_mm256_stream_load_si256(src+0), seed);
+        dest[1] = _mm256_add_epi64(_mm256_stream_load_si256(src+1), seed);
+        dest[2] = _mm256_add_epi64(_mm256_stream_load_si256(src+2), seed);
+        dest[3] = _mm256_add_epi64(_mm256_stream_load_si256(src+3), seed);
+        dest[4] = _mm256_add_epi64(_mm256_stream_load_si256(src+4), seed);
+        dest[5] = _mm256_add_epi64(_mm256_stream_load_si256(src+5), seed);
+    }
+}
+
+#endif
+
+#if defined(__SSE2__) || defined(_M_AMD64) || defined(_M_X64) || (defined(_M_IX86_FP) && (_M_IX86_FP == 2))
+
+XXH_FORCE_INLINE void
+XXH3_accumulate_512_sse2( void* XXH_RESTRICT acc,
+                    const void* XXH_RESTRICT input,
+                    const void* XXH_RESTRICT secret,
+                    XXH3_accWidth_e accWidth)
+{
     /* SSE2 is just a half-scale version of the AVX2 version. */
     XXH_ASSERT((((size_t)acc) & 15) == 0);
     {   XXH_ALIGN(16) __m128i* const xacc    =       (__m128i *) acc;
@@ -1138,7 +1321,7 @@ XXH3_accumulate_512(      void* XXH_RESTRICT acc,
         const         __m128i* const xsecret = (const __m128i *) secret;
 
         size_t i;
-        for (i=0; i < STRIPE_LEN/sizeof(__m128i); i++) {
+        for (i=0; i < XXH_STRIPE_LEN/sizeof(__m128i); i++) {
             /* data_vec    = xinput[i]; */
             __m128i const data_vec    = _mm_loadu_si128   (xinput+i);
             /* key_vec     = xsecret[i]; */
@@ -1162,9 +1345,78 @@ XXH3_accumulate_512(      void* XXH_RESTRICT acc,
                 xacc[i] = _mm_add_epi64(product, sum);
             }
     }   }
+}
 
-#elif (XXH_VECTOR == XXH_NEON)
+XXH_FORCE_INLINE void
+XXH3_scrambleAcc_sse2(void* XXH_RESTRICT acc, const void* XXH_RESTRICT secret)
+{
+    XXH_ASSERT((((size_t)acc) & 15) == 0);
+    {   XXH_ALIGN(16) __m128i* const xacc = (__m128i*) acc;
+        /* Unaligned. This is mainly for pointer arithmetic, and because
+         * _mm_loadu_si128 requires a const __m128i * pointer for some reason. */
+        const         __m128i* const xsecret = (const __m128i *) secret;
+        const __m128i prime32 = _mm_set1_epi32((int)XXH_PRIME32_1);
 
+        size_t i;
+        for (i=0; i < XXH_STRIPE_LEN/sizeof(__m128i); i++) {
+            /* xacc[i] ^= (xacc[i] >> 47) */
+            __m128i const acc_vec     = xacc[i];
+            __m128i const shifted     = _mm_srli_epi64    (acc_vec, 47);
+            __m128i const data_vec    = _mm_xor_si128     (acc_vec, shifted);
+            /* xacc[i] ^= xsecret[i]; */
+            __m128i const key_vec     = _mm_loadu_si128   (xsecret+i);
+            __m128i const data_key    = _mm_xor_si128     (data_vec, key_vec);
+
+            /* xacc[i] *= XXH_PRIME32_1; */
+            __m128i const data_key_hi = _mm_shuffle_epi32 (data_key, _MM_SHUFFLE(0, 3, 0, 1));
+            __m128i const prod_lo     = _mm_mul_epu32     (data_key, prime32);
+            __m128i const prod_hi     = _mm_mul_epu32     (data_key_hi, prime32);
+            xacc[i] = _mm_add_epi64(prod_lo, _mm_slli_epi64(prod_hi, 32));
+        }
+    }
+}
+
+XXH_FORCE_INLINE void XXH3_initCustomSecret_sse2(void* XXH_RESTRICT customSecret, xxh_u64 seed64)
+{
+    XXH_STATIC_ASSERT((XXH_SECRET_DEFAULT_SIZE & 15) == 0);
+    (void)(&XXH_writeLE64);
+    {   int const nbRounds = XXH_SECRET_DEFAULT_SIZE / sizeof(__m128i);
+
+#       if defined(_MSC_VER) && defined(_M_IX86) && _MSC_VER < 1900
+        // MSVC 32bit mode does not support _mm_set_epi64x before 2015
+        XXH_ALIGN(16) const xxh_i64 seed64x2[2] = { (xxh_i64)seed64, -(xxh_i64)seed64 };
+        __m128i const seed = _mm_load_si128((__m128i const*)seed64x2);
+#       else
+        __m128i const seed = _mm_set_epi64x(-(xxh_i64)seed64, (xxh_i64)seed64);
+#       endif
+        int i;
+
+        XXH_ALIGN(64)        const float* const src  = (float const*) XXH3_kSecret;
+        XXH_ALIGN(XXH_SEC_ALIGN) __m128i*       dest = (__m128i*) customSecret;
+#       if defined(__GNUC__) || defined(__clang__)
+        /*
+         * On GCC & Clang, marking 'dest' as modified will cause the compiler:
+         *   - do not extract the secret from sse registers in the internal loop
+         *   - use less common registers, and avoid pushing these reg into stack
+         */
+        __asm__("" : "+r" (dest));
+#       endif
+
+        for (i=0; i < nbRounds; ++i) {
+            dest[i] = _mm_add_epi64(_mm_castps_si128(_mm_load_ps(src+i*4)), seed);
+    }   }
+}
+
+#endif
+
+#if (XXH_VECTOR == XXH_NEON)
+
+XXH_FORCE_INLINE void
+XXH3_accumulate_512_neon( void* XXH_RESTRICT acc,
+                    const void* XXH_RESTRICT input,
+                    const void* XXH_RESTRICT secret,
+                    XXH3_accWidth_e accWidth)
+{
     XXH_ASSERT((((size_t)acc) & 15) == 0);
     {
         XXH_ALIGN(16) uint64x2_t* const xacc = (uint64x2_t *) acc;
@@ -1173,7 +1425,7 @@ XXH3_accumulate_512(      void* XXH_RESTRICT acc,
         uint8_t const* const xsecret  = (const uint8_t *) secret;
 
         size_t i;
-        for (i=0; i < STRIPE_LEN / sizeof(uint64x2_t); i++) {
+        for (i=0; i < XXH_STRIPE_LEN / sizeof(uint64x2_t); i++) {
             /* data_vec = xinput[i]; */
             uint8x16_t data_vec    = vld1q_u8(xinput  + (i * 16));
             /* key_vec  = xsecret[i];  */
@@ -1200,14 +1452,77 @@ XXH3_accumulate_512(      void* XXH_RESTRICT acc,
 
         }
     }
+}
 
-#elif (XXH_VECTOR == XXH_VSX)
+XXH_FORCE_INLINE void
+XXH3_scrambleAcc_neon(void* XXH_RESTRICT acc, const void* XXH_RESTRICT secret)
+{
+    XXH_ASSERT((((size_t)acc) & 15) == 0);
+
+    {   uint64x2_t* xacc       = (uint64x2_t*) acc;
+        uint8_t const* xsecret = (uint8_t const*) secret;
+        uint32x2_t prime       = vdup_n_u32 (XXH_PRIME32_1);
+
+        size_t i;
+        for (i=0; i < XXH_STRIPE_LEN/sizeof(uint64x2_t); i++) {
+            /* xacc[i] ^= (xacc[i] >> 47); */
+            uint64x2_t acc_vec  = xacc[i];
+            uint64x2_t shifted  = vshrq_n_u64 (acc_vec, 47);
+            uint64x2_t data_vec = veorq_u64   (acc_vec, shifted);
+
+            /* xacc[i] ^= xsecret[i]; */
+            uint8x16_t key_vec  = vld1q_u8(xsecret + (i * 16));
+            uint64x2_t data_key = veorq_u64(data_vec, vreinterpretq_u64_u8(key_vec));
+
+            /* xacc[i] *= XXH_PRIME32_1 */
+            uint32x2_t data_key_lo, data_key_hi;
+            /* data_key_lo = (uint32x2_t) (xacc[i] & 0xFFFFFFFF);
+             * data_key_hi = (uint32x2_t) (xacc[i] >> 32);
+             * xacc[i] = UNDEFINED; */
+            XXH_SPLIT_IN_PLACE(data_key, data_key_lo, data_key_hi);
+            {   /*
+                 * prod_hi = (data_key >> 32) * XXH_PRIME32_1;
+                 *
+                 * Avoid vmul_u32 + vshll_n_u32 since Clang 6 and 7 will
+                 * incorrectly "optimize" this:
+                 *   tmp     = vmul_u32(vmovn_u64(a), vmovn_u64(b));
+                 *   shifted = vshll_n_u32(tmp, 32);
+                 * to this:
+                 *   tmp     = "vmulq_u64"(a, b); // no such thing!
+                 *   shifted = vshlq_n_u64(tmp, 32);
+                 *
+                 * However, unlike SSE, Clang lacks a 64-bit multiply routine
+                 * for NEON, and it scalarizes two 64-bit multiplies instead.
+                 *
+                 * vmull_u32 has the same timing as vmul_u32, and it avoids
+                 * this bug completely.
+                 * See https://bugs.llvm.org/show_bug.cgi?id=39967
+                 */
+                uint64x2_t prod_hi = vmull_u32 (data_key_hi, prime);
+                /* xacc[i] = prod_hi << 32; */
+                xacc[i] = vshlq_n_u64(prod_hi, 32);
+                /* xacc[i] += (prod_hi & 0xFFFFFFFF) * XXH_PRIME32_1; */
+                xacc[i] = vmlal_u32(xacc[i], data_key_lo, prime);
+            }
+    }   }
+}
+
+#endif
+
+#if (XXH_VECTOR == XXH_VSX)
+
+XXH_FORCE_INLINE void
+XXH3_accumulate_512_vsx(  void* XXH_RESTRICT acc,
+                    const void* XXH_RESTRICT input,
+                    const void* XXH_RESTRICT secret,
+                    XXH3_accWidth_e accWidth)
+{
           xxh_u64x2* const xacc     =       (xxh_u64x2*) acc;    /* presumed aligned */
     xxh_u64x2 const* const xinput   = (xxh_u64x2 const*) input;   /* no alignment restriction */
     xxh_u64x2 const* const xsecret  = (xxh_u64x2 const*) secret;    /* no alignment restriction */
     xxh_u64x2 const v32 = { 32, 32 };
     size_t i;
-    for (i = 0; i < STRIPE_LEN / sizeof(xxh_u64x2); i++) {
+    for (i = 0; i < XXH_STRIPE_LEN / sizeof(xxh_u64x2); i++) {
         /* data_vec = xinput[i]; */
         xxh_u64x2 const data_vec = XXH_vec_loadu(xinput + i);
         /* key_vec = xsecret[i]; */
@@ -1231,15 +1546,54 @@ XXH3_accumulate_512(      void* XXH_RESTRICT acc,
             xacc[i] += data_swapped;
         }
     }
+}
 
-#else   /* scalar variant of Accumulator - universal */
+XXH_FORCE_INLINE void
+XXH3_scrambleAcc_vsx(void* XXH_RESTRICT acc, const void* XXH_RESTRICT secret)
+{
+    XXH_ASSERT((((size_t)acc) & 15) == 0);
 
+    {         xxh_u64x2* const xacc    =       (xxh_u64x2*) acc;
+        const xxh_u64x2* const xsecret = (const xxh_u64x2*) secret;
+        /* constants */
+        xxh_u64x2 const v32  = { 32, 32 };
+        xxh_u64x2 const v47 = { 47, 47 };
+        xxh_u32x4 const prime = { XXH_PRIME32_1, XXH_PRIME32_1, XXH_PRIME32_1, XXH_PRIME32_1 };
+        size_t i;
+        for (i = 0; i < XXH_STRIPE_LEN / sizeof(xxh_u64x2); i++) {
+            /* xacc[i] ^= (xacc[i] >> 47); */
+            xxh_u64x2 const acc_vec  = xacc[i];
+            xxh_u64x2 const data_vec = acc_vec ^ (acc_vec >> v47);
+
+            /* xacc[i] ^= xsecret[i]; */
+            xxh_u64x2 const key_vec  = XXH_vec_loadu(xsecret + i);
+            xxh_u64x2 const data_key = data_vec ^ key_vec;
+
+            /* xacc[i] *= XXH_PRIME32_1 */
+            /* prod_lo = ((xxh_u64x2)data_key & 0xFFFFFFFF) * ((xxh_u64x2)prime & 0xFFFFFFFF);  */
+            xxh_u64x2 const prod_even  = XXH_vec_mule((xxh_u32x4)data_key, prime);
+            /* prod_hi = ((xxh_u64x2)data_key >> 32) * ((xxh_u64x2)prime >> 32);  */
+            xxh_u64x2 const prod_odd  = XXH_vec_mulo((xxh_u32x4)data_key, prime);
+            xacc[i] = prod_odd + (prod_even << v32);
+    }   }
+}
+
+#endif
+
+/* scalar variant - universal */
+
+XXH_FORCE_INLINE void
+XXH3_accumulate_512_scalar(void* XXH_RESTRICT acc,
+                    const void* XXH_RESTRICT input,
+                    const void* XXH_RESTRICT secret,
+                    XXH3_accWidth_e accWidth)
+{
     XXH_ALIGN(XXH_ACC_ALIGN) xxh_u64* const xacc = (xxh_u64*) acc; /* presumed aligned */
     const xxh_u8* const xinput  = (const xxh_u8*) input;  /* no alignment restriction */
     const xxh_u8* const xsecret = (const xxh_u8*) secret;   /* no alignment restriction */
     size_t i;
     XXH_ASSERT(((size_t)acc & (XXH_ACC_ALIGN-1)) == 0);
-    for (i=0; i < ACC_NB; i++) {
+    for (i=0; i < XXH_ACC_NB; i++) {
         xxh_u64 const data_val = XXH_readLE64(xinput + 8*i);
         xxh_u64 const data_key = data_val ^ XXH_readLE64(xsecret + i*8);
 
@@ -1250,214 +1604,141 @@ XXH3_accumulate_512(      void* XXH_RESTRICT acc,
         }
         xacc[i] += XXH_mult32to64(data_key & 0xFFFFFFFF, data_key >> 32);
     }
-#endif
 }
 
-/*
- * XXH3_scrambleAcc: Scrambles the accumulators to improve mixing.
- *
- * Multiplication isn't perfect, as explained by Google in HighwayHash:
- *
- *  // Multiplication mixes/scrambles bytes 0-7 of the 64-bit result to
- *  // varying degrees. In descending order of goodness, bytes
- *  // 3 4 2 5 1 6 0 7 have quality 228 224 164 160 100 96 36 32.
- *  // As expected, the upper and lower bytes are much worse.
- *
- * Source: https://github.com/google/highwayhash/blob/0aaf66b/highwayhash/hh_avx2.h#L291
- *
- * Since our algorithm uses a pseudorandom secret to add some variance into the
- * mix, we don't need to (or want to) mix as often or as much as HighwayHash does.
- *
- * This isn't as tight as XXH3_accumulate, but still written in SIMD to avoid
- * extraction.
- *
- * Both XXH3_64bits and XXH3_128bits use this subroutine.
- */
 XXH_FORCE_INLINE void
-XXH3_scrambleAcc(void* XXH_RESTRICT acc, const void* XXH_RESTRICT secret)
+XXH3_scrambleAcc_scalar(void* XXH_RESTRICT acc, const void* XXH_RESTRICT secret)
 {
-#if (XXH_VECTOR == XXH_AVX512)
-
-    XXH_ASSERT((((size_t)acc) & 63) == 0);
-    XXH_STATIC_ASSERT(STRIPE_LEN == sizeof(__m512i));
-    {   XXH_ALIGN(64) __m512i* const xacc = (__m512i*) acc;
-        const __m512i prime32 = _mm512_set1_epi32((int)PRIME32_1);
-
-        /* xacc[0] ^= (xacc[0] >> 47) */
-        __m512i const acc_vec     = *xacc;
-        __m512i const shifted     = _mm512_srli_epi64    (acc_vec, 47);
-        __m512i const data_vec    = _mm512_xor_si512     (acc_vec, shifted);
-        /* xacc[0] ^= secret; */
-        __m512i const key_vec     = _mm512_loadu_si512   (secret);
-        __m512i const data_key    = _mm512_xor_si512     (data_vec, key_vec);
-
-        /* xacc[0] *= PRIME32_1; */
-        __m512i const data_key_hi = _mm512_shuffle_epi32 (data_key, _MM_SHUFFLE(0, 3, 0, 1));
-        __m512i const prod_lo     = _mm512_mul_epu32     (data_key, prime32);
-        __m512i const prod_hi     = _mm512_mul_epu32     (data_key_hi, prime32);
-        *xacc = _mm512_add_epi64(prod_lo, _mm512_slli_epi64(prod_hi, 32));
-    }
-
-#elif (XXH_VECTOR == XXH_AVX2)
-
-    XXH_ASSERT((((size_t)acc) & 31) == 0);
-    {   XXH_ALIGN(32) __m256i* const xacc = (__m256i*) acc;
-        /* Unaligned. This is mainly for pointer arithmetic, and because
-         * _mm256_loadu_si256 requires a const __m256i * pointer for some reason. */
-        const         __m256i* const xsecret = (const __m256i *) secret;
-        const __m256i prime32 = _mm256_set1_epi32((int)PRIME32_1);
-
-        size_t i;
-        for (i=0; i < STRIPE_LEN/sizeof(__m256i); i++) {
-            /* xacc[i] ^= (xacc[i] >> 47) */
-            __m256i const acc_vec     = xacc[i];
-            __m256i const shifted     = _mm256_srli_epi64    (acc_vec, 47);
-            __m256i const data_vec    = _mm256_xor_si256     (acc_vec, shifted);
-            /* xacc[i] ^= xsecret; */
-            __m256i const key_vec     = _mm256_loadu_si256   (xsecret+i);
-            __m256i const data_key    = _mm256_xor_si256     (data_vec, key_vec);
-
-            /* xacc[i] *= PRIME32_1; */
-            __m256i const data_key_hi = _mm256_shuffle_epi32 (data_key, _MM_SHUFFLE(0, 3, 0, 1));
-            __m256i const prod_lo     = _mm256_mul_epu32     (data_key, prime32);
-            __m256i const prod_hi     = _mm256_mul_epu32     (data_key_hi, prime32);
-            xacc[i] = _mm256_add_epi64(prod_lo, _mm256_slli_epi64(prod_hi, 32));
-        }
-    }
-
-#elif (XXH_VECTOR == XXH_SSE2)
-
-    XXH_ASSERT((((size_t)acc) & 15) == 0);
-    {   XXH_ALIGN(16) __m128i* const xacc = (__m128i*) acc;
-        /* Unaligned. This is mainly for pointer arithmetic, and because
-         * _mm_loadu_si128 requires a const __m128i * pointer for some reason. */
-        const         __m128i* const xsecret = (const __m128i *) secret;
-        const __m128i prime32 = _mm_set1_epi32((int)PRIME32_1);
-
-        size_t i;
-        for (i=0; i < STRIPE_LEN/sizeof(__m128i); i++) {
-            /* xacc[i] ^= (xacc[i] >> 47) */
-            __m128i const acc_vec     = xacc[i];
-            __m128i const shifted     = _mm_srli_epi64    (acc_vec, 47);
-            __m128i const data_vec    = _mm_xor_si128     (acc_vec, shifted);
-            /* xacc[i] ^= xsecret[i]; */
-            __m128i const key_vec     = _mm_loadu_si128   (xsecret+i);
-            __m128i const data_key    = _mm_xor_si128     (data_vec, key_vec);
-
-            /* xacc[i] *= PRIME32_1; */
-            __m128i const data_key_hi = _mm_shuffle_epi32 (data_key, _MM_SHUFFLE(0, 3, 0, 1));
-            __m128i const prod_lo     = _mm_mul_epu32     (data_key, prime32);
-            __m128i const prod_hi     = _mm_mul_epu32     (data_key_hi, prime32);
-            xacc[i] = _mm_add_epi64(prod_lo, _mm_slli_epi64(prod_hi, 32));
-        }
-    }
-
-#elif (XXH_VECTOR == XXH_NEON)
-
-    XXH_ASSERT((((size_t)acc) & 15) == 0);
-
-    {   uint64x2_t* xacc       = (uint64x2_t*) acc;
-        uint8_t const* xsecret = (uint8_t const*) secret;
-        uint32x2_t prime       = vdup_n_u32 (PRIME32_1);
-
-        size_t i;
-        for (i=0; i < STRIPE_LEN/sizeof(uint64x2_t); i++) {
-            /* xacc[i] ^= (xacc[i] >> 47); */
-            uint64x2_t acc_vec  = xacc[i];
-            uint64x2_t shifted  = vshrq_n_u64 (acc_vec, 47);
-            uint64x2_t data_vec = veorq_u64   (acc_vec, shifted);
-
-            /* xacc[i] ^= xsecret[i]; */
-            uint8x16_t key_vec  = vld1q_u8(xsecret + (i * 16));
-            uint64x2_t data_key = veorq_u64(data_vec, vreinterpretq_u64_u8(key_vec));
-
-            /* xacc[i] *= PRIME32_1 */
-            uint32x2_t data_key_lo, data_key_hi;
-            /* data_key_lo = (uint32x2_t) (xacc[i] & 0xFFFFFFFF);
-             * data_key_hi = (uint32x2_t) (xacc[i] >> 32);
-             * xacc[i] = UNDEFINED; */
-            XXH_SPLIT_IN_PLACE(data_key, data_key_lo, data_key_hi);
-            {   /*
-                 * prod_hi = (data_key >> 32) * PRIME32_1;
-                 *
-                 * Avoid vmul_u32 + vshll_n_u32 since Clang 6 and 7 will
-                 * incorrectly "optimize" this:
-                 *   tmp     = vmul_u32(vmovn_u64(a), vmovn_u64(b));
-                 *   shifted = vshll_n_u32(tmp, 32);
-                 * to this:
-                 *   tmp     = "vmulq_u64"(a, b); // no such thing!
-                 *   shifted = vshlq_n_u64(tmp, 32);
-                 *
-                 * However, unlike SSE, Clang lacks a 64-bit multiply routine
-                 * for NEON, and it scalarizes two 64-bit multiplies instead.
-                 *
-                 * vmull_u32 has the same timing as vmul_u32, and it avoids
-                 * this bug completely.
-                 * See https://bugs.llvm.org/show_bug.cgi?id=39967
-                 */
-                uint64x2_t prod_hi = vmull_u32 (data_key_hi, prime);
-                /* xacc[i] = prod_hi << 32; */
-                xacc[i] = vshlq_n_u64(prod_hi, 32);
-                /* xacc[i] += (prod_hi & 0xFFFFFFFF) * PRIME32_1; */
-                xacc[i] = vmlal_u32(xacc[i], data_key_lo, prime);
-            }
-    }   }
-
-#elif (XXH_VECTOR == XXH_VSX)
-
-    XXH_ASSERT((((size_t)acc) & 15) == 0);
-
-    {         xxh_u64x2* const xacc    =       (xxh_u64x2*) acc;
-        const xxh_u64x2* const xsecret = (const xxh_u64x2*) secret;
-        /* constants */
-        xxh_u64x2 const v32  = { 32, 32 };
-        xxh_u64x2 const v47 = { 47, 47 };
-        xxh_u32x4 const prime = { PRIME32_1, PRIME32_1, PRIME32_1, PRIME32_1 };
-        size_t i;
-        for (i = 0; i < STRIPE_LEN / sizeof(xxh_u64x2); i++) {
-            /* xacc[i] ^= (xacc[i] >> 47); */
-            xxh_u64x2 const acc_vec  = xacc[i];
-            xxh_u64x2 const data_vec = acc_vec ^ (acc_vec >> v47);
-
-            /* xacc[i] ^= xsecret[i]; */
-            xxh_u64x2 const key_vec  = XXH_vec_loadu(xsecret + i);
-            xxh_u64x2 const data_key = data_vec ^ key_vec;
-
-            /* xacc[i] *= PRIME32_1 */
-            /* prod_lo = ((xxh_u64x2)data_key & 0xFFFFFFFF) * ((xxh_u64x2)prime & 0xFFFFFFFF);  */
-            xxh_u64x2 const prod_even  = XXH_vec_mule((xxh_u32x4)data_key, prime);
-            /* prod_hi = ((xxh_u64x2)data_key >> 32) * ((xxh_u64x2)prime >> 32);  */
-            xxh_u64x2 const prod_odd  = XXH_vec_mulo((xxh_u32x4)data_key, prime);
-            xacc[i] = prod_odd + (prod_even << v32);
-    }   }
-
-#else   /* scalar variant of Scrambler - universal */
-
     XXH_ALIGN(XXH_ACC_ALIGN) xxh_u64* const xacc = (xxh_u64*) acc;   /* presumed aligned */
     const xxh_u8* const xsecret = (const xxh_u8*) secret;   /* no alignment restriction */
     size_t i;
     XXH_ASSERT((((size_t)acc) & (XXH_ACC_ALIGN-1)) == 0);
-    for (i=0; i < ACC_NB; i++) {
+    for (i=0; i < XXH_ACC_NB; i++) {
         xxh_u64 const key64 = XXH_readLE64(xsecret + 8*i);
         xxh_u64 acc64 = xacc[i];
         acc64 = XXH_xorshift64(acc64, 47);
         acc64 ^= key64;
-        acc64 *= PRIME32_1;
+        acc64 *= XXH_PRIME32_1;
         xacc[i] = acc64;
     }
-
-#endif
 }
 
-#define XXH_PREFETCH_DIST 384
+XXH_FORCE_INLINE void
+XXH3_initCustomSecret_scalar(void* XXH_RESTRICT customSecret, xxh_u64 seed64)
+{
+    /*
+     * We need a separate pointer for the hack below,
+     * which requires a non-const pointer.
+     * Any decent compiler will optimize this out otherwise.
+     */
+    const xxh_u8* kSecretPtr = XXH3_kSecret;
+    XXH_STATIC_ASSERT((XXH_SECRET_DEFAULT_SIZE & 15) == 0);
 
-#ifdef __clang__ // for clang
-#  define XXH_PREFETCH_DIST_AVX512_64  320
-#  define XXH_PREFETCH_DIST_AVX512_128 320
-#else // for gcc
-#  define XXH_PREFETCH_DIST_AVX512_64  640
-#  define XXH_PREFETCH_DIST_AVX512_128 512
+#if defined(__clang__) && defined(__aarch64__)
+    /*
+     * UGLY HACK:
+     * Clang generates a bunch of MOV/MOVK pairs for aarch64, and they are
+     * placed sequentially, in order, at the top of the unrolled loop.
+     *
+     * While MOVK is great for generating constants (2 cycles for a 64-bit
+     * constant compared to 4 cycles for LDR), long MOVK chains stall the
+     * integer pipelines:
+     *   I   L   S
+     * MOVK
+     * MOVK
+     * MOVK
+     * MOVK
+     * ADD
+     * SUB      STR
+     *          STR
+     * By forcing loads from memory (as the asm line causes Clang to assume
+     * that XXH3_kSecretPtr has been changed), the pipelines are used more
+     * efficiently:
+     *   I   L   S
+     *      LDR
+     *  ADD LDR
+     *  SUB     STR
+     *          STR
+     * XXH3_64bits_withSeed, len == 256, Snapdragon 835
+     *   without hack: 2654.4 MB/s
+     *   with hack:    3202.9 MB/s
+     */
+    __asm__("" : "+r" (kSecretPtr));
 #endif
+    /*
+     * Note: in debug mode, this overrides the asm optimization
+     * and Clang will emit MOVK chains again.
+     */
+    XXH_ASSERT(kSecretPtr == XXH3_kSecret);
+
+    {   int const nbRounds = XXH_SECRET_DEFAULT_SIZE / 16;
+        int i;
+        for (i=0; i < nbRounds; i++) {
+            /*
+             * The asm hack causes Clang to assume that kSecretPtr aliases with
+             * customSecret, and on aarch64, this prevented LDP from merging two
+             * loads together for free. Putting the loads together before the stores
+             * properly generates LDP.
+             */
+            xxh_u64 lo = XXH_readLE64(kSecretPtr + 16*i)     + seed64;
+            xxh_u64 hi = XXH_readLE64(kSecretPtr + 16*i + 8) - seed64;
+            XXH_writeLE64((xxh_u8*)customSecret + 16*i,     lo);
+            XXH_writeLE64((xxh_u8*)customSecret + 16*i + 8, hi);
+    }   }
+}
+
+
+
+#if (XXH_VECTOR == XXH_AVX512)
+
+#define XXH3_accumulate_512 XXH3_accumulate_512_avx512
+#define XXH3_scrambleAcc    XXH3_scrambleAcc_avx512
+#define XXH3_initCustomSecret XXH3_initCustomSecret_avx512
+
+#elif (XXH_VECTOR == XXH_AVX2)
+
+#define XXH3_accumulate_512 XXH3_accumulate_512_avx2
+#define XXH3_scrambleAcc    XXH3_scrambleAcc_avx2
+#define XXH3_initCustomSecret XXH3_initCustomSecret_avx2
+
+#elif (XXH_VECTOR == XXH_SSE2)
+
+#define XXH3_accumulate_512 XXH3_accumulate_512_sse2
+#define XXH3_scrambleAcc    XXH3_scrambleAcc_sse2
+#define XXH3_initCustomSecret XXH3_initCustomSecret_sse2
+
+#elif (XXH_VECTOR == XXH_NEON)
+
+#define XXH3_accumulate_512 XXH3_accumulate_512_neon
+#define XXH3_scrambleAcc    XXH3_scrambleAcc_neon
+#define XXH3_initCustomSecret XXH3_initCustomSecret_scalar
+
+#elif (XXH_VECTOR == XXH_VSX)
+
+#define XXH3_accumulate_512 XXH3_accumulate_512_vsx
+#define XXH3_scrambleAcc    XXH3_scrambleAcc_vsx
+#define XXH3_initCustomSecret XXH3_initCustomSecret_scalar
+
+#else /* scalar */
+
+#define XXH3_accumulate_512 XXH3_accumulate_512_scalar
+#define XXH3_scrambleAcc    XXH3_scrambleAcc_scalar
+#define XXH3_initCustomSecret XXH3_initCustomSecret_scalar
+
+#endif
+
+
+#ifndef XXH_PREFETCH_DIST
+#  ifdef __clang__
+#    define XXH_PREFETCH_DIST 320
+#  else
+#    if (XXH_VECTOR == XXH_AVX512)
+#      define XXH_PREFETCH_DIST 512
+#    else
+#      define XXH_PREFETCH_DIST 384
+#    endif
+#  endif  /* __clang__ */
+#endif  /* XXH_PREFETCH_DIST */
 
 /*
  * XXH3_accumulate()
@@ -1473,13 +1754,8 @@ XXH3_accumulate(     xxh_u64* XXH_RESTRICT acc,
 {
     size_t n;
     for (n = 0; n < nbStripes; n++ ) {
-        const xxh_u8* const in = input + n*STRIPE_LEN;
-#if (XXH_VECTOR == XXH_AVX512)
-        if (accWidth == XXH3_acc_64bits) XXH_PREFETCH(in + XXH_PREFETCH_DIST_AVX512_64);
-        else                             XXH_PREFETCH(in + XXH_PREFETCH_DIST_AVX512_128);
-#else
+        const xxh_u8* const in = input + n*XXH_STRIPE_LEN;
         XXH_PREFETCH(in + XXH_PREFETCH_DIST);
-#endif
         XXH3_accumulate_512(acc,
                             in,
                             secret + n*XXH_SECRET_CONSUME_RATE,
@@ -1493,8 +1769,8 @@ XXH3_hashLong_internal_loop( xxh_u64* XXH_RESTRICT acc,
                       const xxh_u8* XXH_RESTRICT secret, size_t secretSize,
                             XXH3_accWidth_e accWidth)
 {
-    size_t const nb_rounds = (secretSize - STRIPE_LEN) / XXH_SECRET_CONSUME_RATE;
-    size_t const block_len = STRIPE_LEN * nb_rounds;
+    size_t const nb_rounds = (secretSize - XXH_STRIPE_LEN) / XXH_SECRET_CONSUME_RATE;
+    size_t const block_len = XXH_STRIPE_LEN * nb_rounds;
     size_t const nb_blocks = len / block_len;
 
     size_t n;
@@ -1503,21 +1779,21 @@ XXH3_hashLong_internal_loop( xxh_u64* XXH_RESTRICT acc,
 
     for (n = 0; n < nb_blocks; n++) {
         XXH3_accumulate(acc, input + n*block_len, secret, nb_rounds, accWidth);
-        XXH3_scrambleAcc(acc, secret + secretSize - STRIPE_LEN);
+        XXH3_scrambleAcc(acc, secret + secretSize - XXH_STRIPE_LEN);
     }
 
     /* last partial block */
-    XXH_ASSERT(len > STRIPE_LEN);
-    {   size_t const nbStripes = (len - (block_len * nb_blocks)) / STRIPE_LEN;
+    XXH_ASSERT(len > XXH_STRIPE_LEN);
+    {   size_t const nbStripes = (len - (block_len * nb_blocks)) / XXH_STRIPE_LEN;
         XXH_ASSERT(nbStripes <= (secretSize / XXH_SECRET_CONSUME_RATE));
         XXH3_accumulate(acc, input + nb_blocks*block_len, secret, nbStripes, accWidth);
 
         /* last stripe */
-        if (len & (STRIPE_LEN - 1)) {
-            const xxh_u8* const p = input + len - STRIPE_LEN;
+        if (len & (XXH_STRIPE_LEN - 1)) {
+            const xxh_u8* const p = input + len - XXH_STRIPE_LEN;
             /* Do not align on 8, so that the secret is different from the scrambler */
 #define XXH_SECRET_LASTACC_START 7
-            XXH3_accumulate_512(acc, p, secret + secretSize - STRIPE_LEN - XXH_SECRET_LASTACC_START, accWidth);
+            XXH3_accumulate_512(acc, p, secret + secretSize - XXH_STRIPE_LEN - XXH_SECRET_LASTACC_START, accWidth);
     }   }
 }
 
@@ -1556,14 +1832,14 @@ XXH3_mergeAccs(const xxh_u64* XXH_RESTRICT acc, const xxh_u8* XXH_RESTRICT secre
     return XXH3_avalanche(result64);
 }
 
-#define XXH3_INIT_ACC { PRIME32_3, PRIME64_1, PRIME64_2, PRIME64_3, \
-                        PRIME64_4, PRIME32_2, PRIME64_5, PRIME32_1 }
+#define XXH3_INIT_ACC { XXH_PRIME32_3, XXH_PRIME64_1, XXH_PRIME64_2, XXH_PRIME64_3, \
+                        XXH_PRIME64_4, XXH_PRIME32_2, XXH_PRIME64_5, XXH_PRIME32_1 }
 
 XXH_FORCE_INLINE XXH64_hash_t
 XXH3_hashLong_64b_internal(const xxh_u8* XXH_RESTRICT input, size_t len,
                            const xxh_u8* XXH_RESTRICT secret, size_t secretSize)
 {
-    XXH_ALIGN(XXH_ACC_ALIGN) xxh_u64 acc[ACC_NB] = XXH3_INIT_ACC;
+    XXH_ALIGN(XXH_ACC_ALIGN) xxh_u64 acc[XXH_ACC_NB] = XXH3_INIT_ACC;
 
     XXH3_hashLong_internal_loop(acc, input, len, secret, secretSize, XXH3_acc_64bits);
 
@@ -1572,78 +1848,7 @@ XXH3_hashLong_64b_internal(const xxh_u8* XXH_RESTRICT input, size_t len,
     /* do not align on 8, so that the secret is different from the accumulator */
 #define XXH_SECRET_MERGEACCS_START 11
     XXH_ASSERT(secretSize >= sizeof(acc) + XXH_SECRET_MERGEACCS_START);
-    return XXH3_mergeAccs(acc, secret + XXH_SECRET_MERGEACCS_START, (xxh_u64)len * PRIME64_1);
-}
-
-XXH_FORCE_INLINE void XXH_writeLE64(void* dst, xxh_u64 v64)
-{
-    if (!XXH_CPU_LITTLE_ENDIAN) v64 = XXH_swap64(v64);
-    memcpy(dst, &v64, sizeof(v64));
-}
-
-/* XXH3_initCustomSecret() :
- * destination `customSecret` is presumed allocated and same size as `kSecret`.
- */
-XXH_FORCE_INLINE void XXH3_initCustomSecret(xxh_u8* XXH_RESTRICT customSecret, xxh_u64 seed64)
-{
-    int const nbRounds = XXH_SECRET_DEFAULT_SIZE / 16;
-    int i;
-    /*
-     * We need a separate pointer for the hack below.
-     * Any decent compiler will optimize this out otherwise.
-     */
-    const xxh_u8 *kSecretPtr = kSecret;
-
-    XXH_STATIC_ASSERT((XXH_SECRET_DEFAULT_SIZE & 15) == 0);
-
-#if defined(__clang__) && defined(__aarch64__)
-    /*
-     * UGLY HACK:
-     * Clang generates a bunch of MOV/MOVK pairs for aarch64, and they are
-     * placed sequentially, in order, at the top of the unrolled loop.
-     *
-     * While MOVK is great for generating constants (2 cycles for a 64-bit
-     * constant compared to 4 cycles for LDR), long MOVK chains stall the
-     * integer pipelines:
-     *   I   L   S
-     * MOVK
-     * MOVK
-     * MOVK
-     * MOVK
-     * ADD
-     * SUB      STR
-     *          STR
-     * By forcing loads from memory (as the asm line causes Clang to assume
-     * that kSecretPtr has been changed), the pipelines are used more efficiently:
-     *   I   L   S
-     *      LDR
-     *  ADD LDR
-     *  SUB     STR
-     *          STR
-     * XXH3_64bits_withSeed, len == 256, Snapdragon 835
-     *   without hack: 2654.4 MB/s
-     *   with hack:    3202.9 MB/s
-     */
-    __asm__("" : "+r" (kSecretPtr));
-#endif
-    /*
-     * Note: in debug mode, this overrides the asm optimization
-     * and Clang will emit MOVK chains again.
-     */
-    XXH_ASSERT(kSecretPtr == kSecret);
-
-    for (i=0; i < nbRounds; i++) {
-        /*
-         * The asm hack causes Clang to assume that kSecretPtr aliases with
-         * customSecret, and on aarch64, this prevented LDP from merging two
-         * loads together for free. Putting the loads together before the stores
-         * properly generates LDP.
-         */
-        xxh_u64 lo = XXH_readLE64(kSecretPtr + 16*i)     + seed64;
-        xxh_u64 hi = XXH_readLE64(kSecretPtr + 16*i + 8) - seed64;
-        XXH_writeLE64(customSecret + 16*i,     lo);
-        XXH_writeLE64(customSecret + 16*i + 8, hi);
-    }
+    return XXH3_mergeAccs(acc, secret + XXH_SECRET_MERGEACCS_START, (xxh_u64)len * XXH_PRIME64_1);
 }
 
 
@@ -1654,7 +1859,7 @@ XXH_FORCE_INLINE void XXH3_initCustomSecret(xxh_u8* XXH_RESTRICT customSecret, x
 XXH_NO_INLINE XXH3_DISPATCH_FUNC XXH64_hash_t
 XXH3_hashLong_64b_defaultSecret(const xxh_u8* XXH_RESTRICT input, size_t len)
 {
-    return XXH3_hashLong_64b_internal(input, len, kSecret, sizeof(kSecret));
+    return XXH3_hashLong_64b_internal(input, len, XXH3_kSecret, sizeof(XXH3_kSecret));
 }
 
 /*
@@ -1670,7 +1875,7 @@ XXH3_hashLong_64b_withSecret(const xxh_u8* XXH_RESTRICT input, size_t len,
 
 /*
  * XXH3_hashLong_64b_withSeed():
- * Generate a custom key based on alteration of default kSecret with the seed,
+ * Generate a custom key based on alteration of default XXH3_kSecret with the seed,
  * and then use this key for long mode hashing.
  *
  * This operation is decently fast but nonetheless costs a little bit of time.
@@ -1682,10 +1887,22 @@ XXH3_hashLong_64b_withSecret(const xxh_u8* XXH_RESTRICT input, size_t len,
 XXH_NO_INLINE XXH3_DISPATCH_FUNC XXH64_hash_t
 XXH3_hashLong_64b_withSeed(const xxh_u8* input, size_t len, XXH64_hash_t seed)
 {
-    XXH_ALIGN(8) xxh_u8 secret[XXH_SECRET_DEFAULT_SIZE];
-    if (seed==0) return XXH3_hashLong_64b_defaultSecret(input, len);
-    XXH3_initCustomSecret(secret, seed);
-    return XXH3_hashLong_64b_internal(input, len, secret, sizeof(secret));
+    if (seed == 0) return XXH3_hashLong_64b_defaultSecret(input, len);
+#if XXH_VECTOR == XXH_AVX2 || XXH_VECTOR == XXH_AVX512
+    // manually deal with alignment of the custom secret
+    // this will avoid pushing the rsp register to stack
+    XXH_STATIC_ASSERT(XXH_SEC_ALIGN <= 64);
+    {   XXH_ALIGN(8) xxh_u8 secret[XXH_SECRET_DEFAULT_SIZE+64];
+        XXH_ALIGN(64) xxh_u8 *const secretAlign64 = (xxh_u8*)((size_t)(secret+63)&~63ULL);
+        XXH3_initCustomSecret(secretAlign64, seed);
+        return XXH3_hashLong_64b_internal(input, len, secretAlign64, XXH_SECRET_DEFAULT_SIZE);
+    }
+#else
+    {   XXH_ALIGN(XXH_SEC_ALIGN) xxh_u8 secret[XXH_SECRET_DEFAULT_SIZE];
+        XXH3_initCustomSecret(secret, seed);
+        return XXH3_hashLong_64b_internal(input, len, secret, sizeof(secret));
+    }
+#endif
 }
 
 /* ===   Public entry point   === */
@@ -1693,11 +1910,11 @@ XXH3_hashLong_64b_withSeed(const xxh_u8* input, size_t len, XXH64_hash_t seed)
 XXH_PUBLIC_API XXH64_hash_t XXH3_64bits(const void* input, size_t len)
 {
     if (len <= 16)
-        return XXH3_len_0to16_64b((const xxh_u8*)input, len, kSecret, 0);
+        return XXH3_len_0to16_64b((const xxh_u8*)input, len, XXH3_kSecret, 0);
     if (len <= 128)
-        return XXH3_len_17to128_64b((const xxh_u8*)input, len, kSecret, sizeof(kSecret), 0);
+        return XXH3_len_17to128_64b((const xxh_u8*)input, len, XXH3_kSecret, sizeof(XXH3_kSecret), 0);
     if (len <= XXH3_MIDSIZE_MAX)
-         return XXH3_len_129to240_64b((const xxh_u8*)input, len, kSecret, sizeof(kSecret), 0);
+         return XXH3_len_129to240_64b((const xxh_u8*)input, len, XXH3_kSecret, sizeof(XXH3_kSecret), 0);
     XXH3_DISPATCH_RETURN(hashLong_64b_defaultSecret, ((const xxh_u8*)input, len));
 }
 
@@ -1724,11 +1941,11 @@ XXH_PUBLIC_API XXH64_hash_t
 XXH3_64bits_withSeed(const void* input, size_t len, XXH64_hash_t seed)
 {
     if (len <= 16)
-        return XXH3_len_0to16_64b((const xxh_u8*)input, len, kSecret, seed);
+        return XXH3_len_0to16_64b((const xxh_u8*)input, len, XXH3_kSecret, seed);
     if (len <= 128)
-        return XXH3_len_17to128_64b((const xxh_u8*)input, len, kSecret, sizeof(kSecret), seed);
+        return XXH3_len_17to128_64b((const xxh_u8*)input, len, XXH3_kSecret, sizeof(XXH3_kSecret), seed);
     if (len <= XXH3_MIDSIZE_MAX)
-        return XXH3_len_129to240_64b((const xxh_u8*)input, len, kSecret, sizeof(kSecret), seed);
+        return XXH3_len_129to240_64b((const xxh_u8*)input, len, XXH3_kSecret, sizeof(XXH3_kSecret), seed);
     XXH3_DISPATCH_RETURN(hashLong_64b_withSeed, ((const xxh_u8*)input, len, seed));
 }
 
@@ -1824,19 +2041,19 @@ XXH3_64bits_reset_internal(XXH3_state_t* statePtr,
 {
     XXH_ASSERT(statePtr != NULL);
     memset(statePtr, 0, sizeof(*statePtr));
-    statePtr->acc[0] = PRIME32_3;
-    statePtr->acc[1] = PRIME64_1;
-    statePtr->acc[2] = PRIME64_2;
-    statePtr->acc[3] = PRIME64_3;
-    statePtr->acc[4] = PRIME64_4;
-    statePtr->acc[5] = PRIME32_2;
-    statePtr->acc[6] = PRIME64_5;
-    statePtr->acc[7] = PRIME32_1;
+    statePtr->acc[0] = XXH_PRIME32_3;
+    statePtr->acc[1] = XXH_PRIME64_1;
+    statePtr->acc[2] = XXH_PRIME64_2;
+    statePtr->acc[3] = XXH_PRIME64_3;
+    statePtr->acc[4] = XXH_PRIME64_4;
+    statePtr->acc[5] = XXH_PRIME32_2;
+    statePtr->acc[6] = XXH_PRIME64_5;
+    statePtr->acc[7] = XXH_PRIME32_1;
     statePtr->seed = seed;
     XXH_ASSERT(secret != NULL);
-    statePtr->secret = secret;
+    statePtr->extSecret = secret;
     XXH_ASSERT(secretSize >= XXH3_SECRET_SIZE_MIN);
-    statePtr->secretLimit = (XXH32_hash_t)(secretSize - STRIPE_LEN);
+    statePtr->secretLimit = secretSize - XXH_STRIPE_LEN;
     statePtr->nbStripesPerBlock = statePtr->secretLimit / XXH_SECRET_CONSUME_RATE;
 }
 
@@ -1844,7 +2061,7 @@ XXH_PUBLIC_API XXH_errorcode
 XXH3_64bits_reset(XXH3_state_t* statePtr)
 {
     if (statePtr == NULL) return XXH_ERROR;
-    XXH3_64bits_reset_internal(statePtr, 0, kSecret, XXH_SECRET_DEFAULT_SIZE);
+    XXH3_64bits_reset_internal(statePtr, 0, XXH3_kSecret, XXH_SECRET_DEFAULT_SIZE);
     return XXH_OK;
 }
 
@@ -1862,17 +2079,17 @@ XXH_PUBLIC_API XXH_errorcode
 XXH3_64bits_reset_withSeed(XXH3_state_t* statePtr, XXH64_hash_t seed)
 {
     if (statePtr == NULL) return XXH_ERROR;
-    XXH3_64bits_reset_internal(statePtr, seed, kSecret, XXH_SECRET_DEFAULT_SIZE);
+    XXH3_64bits_reset_internal(statePtr, seed, XXH3_kSecret, XXH_SECRET_DEFAULT_SIZE);
     XXH3_initCustomSecret(statePtr->customSecret, seed);
-    statePtr->secret = statePtr->customSecret;
+    statePtr->extSecret = NULL;
     return XXH_OK;
 }
 
 XXH_FORCE_INLINE void
-XXH3_consumeStripes( xxh_u64* acc,
-                    XXH32_hash_t* nbStripesSoFarPtr, XXH32_hash_t nbStripesPerBlock,
-                    const xxh_u8* input, size_t totalStripes,
-                    const xxh_u8* secret, size_t secretLimit,
+XXH3_consumeStripes(xxh_u64* XXH_RESTRICT acc,
+                    size_t* XXH_RESTRICT nbStripesSoFarPtr, size_t nbStripesPerBlock,
+                    const xxh_u8* XXH_RESTRICT input, size_t totalStripes,
+                    const xxh_u8* XXH_RESTRICT secret, size_t secretLimit,
                     XXH3_accWidth_e accWidth)
 {
     XXH_ASSERT(*nbStripesSoFarPtr < nbStripesPerBlock);
@@ -1881,11 +2098,11 @@ XXH3_consumeStripes( xxh_u64* acc,
         size_t const nbStripes = nbStripesPerBlock - *nbStripesSoFarPtr;
         XXH3_accumulate(acc, input, secret + *nbStripesSoFarPtr * XXH_SECRET_CONSUME_RATE, nbStripes, accWidth);
         XXH3_scrambleAcc(acc, secret + secretLimit);
-        XXH3_accumulate(acc, input + nbStripes * STRIPE_LEN, secret, totalStripes - nbStripes, accWidth);
-        *nbStripesSoFarPtr = (XXH32_hash_t)(totalStripes - nbStripes);
+        XXH3_accumulate(acc, input + nbStripes * XXH_STRIPE_LEN, secret, totalStripes - nbStripes, accWidth);
+        *nbStripesSoFarPtr = totalStripes - nbStripes;
     } else {
-        XXH3_accumulate(acc, input, secret + *nbStripesSoFarPtr * XXH_SECRET_CONSUME_RATE, totalStripes, accWidth);
-        *nbStripesSoFarPtr += (XXH32_hash_t)totalStripes;
+        XXH3_accumulate(acc, input, secret + nbStripesSoFarPtr[0] * XXH_SECRET_CONSUME_RATE, totalStripes, accWidth);
+        *nbStripesSoFarPtr += totalStripes;
     }
 }
 
@@ -1903,6 +2120,7 @@ XXH3_update(XXH3_state_t* state, const xxh_u8* input, size_t len, XXH3_accWidth_
 #endif
 
     {   const xxh_u8* const bEnd = input + len;
+        const unsigned char* const secret = (state->extSecret == NULL) ? state->customSecret : state->extSecret;
 
         state->totalLen += len;
 
@@ -1913,8 +2131,8 @@ XXH3_update(XXH3_state_t* state, const xxh_u8* input, size_t len, XXH3_accWidth_
         }
         /* input is now > XXH3_INTERNALBUFFER_SIZE */
 
-        #define XXH3_INTERNALBUFFER_STRIPES (XXH3_INTERNALBUFFER_SIZE / STRIPE_LEN)
-        XXH_STATIC_ASSERT(XXH3_INTERNALBUFFER_SIZE % STRIPE_LEN == 0);   /* clean multiple */
+        #define XXH3_INTERNALBUFFER_STRIPES (XXH3_INTERNALBUFFER_SIZE / XXH_STRIPE_LEN)
+        XXH_STATIC_ASSERT(XXH3_INTERNALBUFFER_SIZE % XXH_STRIPE_LEN == 0);   /* clean multiple */
 
         /*
          * There is some input left inside the internal buffer.
@@ -1927,7 +2145,7 @@ XXH3_update(XXH3_state_t* state, const xxh_u8* input, size_t len, XXH3_accWidth_
             XXH3_consumeStripes(state->acc,
                                &state->nbStripesSoFar, state->nbStripesPerBlock,
                                 state->buffer, XXH3_INTERNALBUFFER_STRIPES,
-                                state->secret, state->secretLimit,
+                                secret, state->secretLimit,
                                 accWidth);
             state->bufferedSize = 0;
         }
@@ -1939,10 +2157,12 @@ XXH3_update(XXH3_state_t* state, const xxh_u8* input, size_t len, XXH3_accWidth_
                 XXH3_consumeStripes(state->acc,
                                    &state->nbStripesSoFar, state->nbStripesPerBlock,
                                     input, XXH3_INTERNALBUFFER_STRIPES,
-                                    state->secret, state->secretLimit,
+                                    secret, state->secretLimit,
                                     accWidth);
                 input += XXH3_INTERNALBUFFER_SIZE;
             } while (input<=limit);
+            /* for last partial stripe */
+            memcpy(state->buffer + sizeof(state->buffer) - XXH_STRIPE_LEN, input - XXH_STRIPE_LEN, XXH_STRIPE_LEN);
         }
 
         if (input < bEnd) { /* Some remaining input: buffer it */
@@ -1973,54 +2193,58 @@ XXH3_64bits_update(XXH3_state_t* state, const void* input, size_t len)
 
 
 XXH_FORCE_INLINE void
-XXH3_digest_long (XXH64_hash_t* acc, const XXH3_state_t* state, XXH3_accWidth_e accWidth)
+XXH3_digest_long (XXH64_hash_t* acc,
+                  const XXH3_state_t* state,
+                  const unsigned char* secret,
+                  XXH3_accWidth_e accWidth)
 {
     /*
      * Digest on a local copy. This way, the state remains unaltered, and it can
      * continue ingesting more input afterwards.
      */
     memcpy(acc, state->acc, sizeof(state->acc));
-    if (state->bufferedSize >= STRIPE_LEN) {
-        size_t const totalNbStripes = state->bufferedSize / STRIPE_LEN;
-        XXH32_hash_t nbStripesSoFar = state->nbStripesSoFar;
+    if (state->bufferedSize >= XXH_STRIPE_LEN) {
+        size_t const nbStripes = state->bufferedSize / XXH_STRIPE_LEN;
+        size_t nbStripesSoFar = state->nbStripesSoFar;
         XXH3_consumeStripes(acc,
                            &nbStripesSoFar, state->nbStripesPerBlock,
-                            state->buffer, totalNbStripes,
-                            state->secret, state->secretLimit,
+                            state->buffer, nbStripes,
+                            secret, state->secretLimit,
                             accWidth);
-        if (state->bufferedSize % STRIPE_LEN) {  /* one last partial stripe */
+        if (state->bufferedSize % XXH_STRIPE_LEN) {  /* one last partial stripe */
             XXH3_accumulate_512(acc,
-                                state->buffer + state->bufferedSize - STRIPE_LEN,
-                                state->secret + state->secretLimit - XXH_SECRET_LASTACC_START,
+                                state->buffer + state->bufferedSize - XXH_STRIPE_LEN,
+                                secret + state->secretLimit - XXH_SECRET_LASTACC_START,
                                 accWidth);
         }
-    } else {  /* bufferedSize < STRIPE_LEN */
+    } else {  /* bufferedSize < XXH_STRIPE_LEN */
         if (state->bufferedSize) { /* one last stripe */
-            xxh_u8 lastStripe[STRIPE_LEN];
-            size_t const catchupSize = STRIPE_LEN - state->bufferedSize;
+            xxh_u8 lastStripe[XXH_STRIPE_LEN];
+            size_t const catchupSize = XXH_STRIPE_LEN - state->bufferedSize;
             memcpy(lastStripe, state->buffer + sizeof(state->buffer) - catchupSize, catchupSize);
             memcpy(lastStripe + catchupSize, state->buffer, state->bufferedSize);
             XXH3_accumulate_512(acc,
                                 lastStripe,
-                                state->secret + state->secretLimit - XXH_SECRET_LASTACC_START,
+                                secret + state->secretLimit - XXH_SECRET_LASTACC_START,
                                 accWidth);
     }   }
 }
 
 XXH_PUBLIC_API XXH64_hash_t XXH3_64bits_digest (const XXH3_state_t* state)
 {
+    const unsigned char* const secret = (state->extSecret == NULL) ? state->customSecret : state->extSecret;
     if (state->totalLen > XXH3_MIDSIZE_MAX) {
-        XXH_ALIGN(XXH_ACC_ALIGN) XXH64_hash_t acc[ACC_NB];
-        XXH3_digest_long(acc, state, XXH3_acc_64bits);
+        XXH_ALIGN(XXH_ACC_ALIGN) XXH64_hash_t acc[XXH_ACC_NB];
+        XXH3_digest_long(acc, state, secret, XXH3_acc_64bits);
         return XXH3_mergeAccs(acc,
-                              state->secret + XXH_SECRET_MERGEACCS_START,
-                              (xxh_u64)state->totalLen * PRIME64_1);
+                              secret + XXH_SECRET_MERGEACCS_START,
+                              (xxh_u64)state->totalLen * XXH_PRIME64_1);
     }
-    /* len <= XXH3_MIDSIZE_MAX: short code */
+    /* totalLen <= XXH3_MIDSIZE_MAX: digesting a short input */
     if (state->seed)
         return XXH3_64bits_withSeed(state->buffer, (size_t)state->totalLen, state->seed);
     return XXH3_64bits_withSecret(state->buffer, (size_t)(state->totalLen),
-                                  state->secret, state->secretLimit + STRIPE_LEN);
+                                  secret, state->secretLimit + XXH_STRIPE_LEN);
 }
 
 /* ==========================================
@@ -2062,8 +2286,8 @@ XXH3_len_1to3_128b(const xxh_u8* input, size_t len, const xxh_u8* secret, XXH64_
         xxh_u64 const bitfliph = (XXH_readLE32(secret+8) ^ XXH_readLE32(secret+12)) - seed;
         xxh_u64 const keyed_lo = (xxh_u64)combinedl ^ bitflipl;
         xxh_u64 const keyed_hi = (xxh_u64)combinedh ^ bitfliph;
-        xxh_u64 const mixedl = keyed_lo * PRIME64_1;
-        xxh_u64 const mixedh = keyed_hi * PRIME64_5;
+        xxh_u64 const mixedl = keyed_lo * XXH_PRIME64_1;
+        xxh_u64 const mixedh = keyed_hi * XXH_PRIME64_5;
         XXH128_hash_t h128;
         h128.low64  = XXH3_avalanche(mixedl);
         h128.high64 = XXH3_avalanche(mixedh);
@@ -2085,7 +2309,7 @@ XXH3_len_4to8_128b(const xxh_u8* input, size_t len, const xxh_u8* secret, XXH64_
         xxh_u64 const keyed = input_64 ^ bitflip;
 
         /* Shift len to the left to ensure it is even, this avoids even multiplies. */
-        XXH128_hash_t m128 = XXH_mult64to128(keyed, PRIME64_1 + (len << 2));
+        XXH128_hash_t m128 = XXH_mult64to128(keyed, XXH_PRIME64_1 + (len << 2));
 
         m128.high64 += (m128.low64 << 1);
         m128.low64  ^= (m128.high64 >> 3);
@@ -2108,7 +2332,7 @@ XXH3_len_9to16_128b(const xxh_u8* input, size_t len, const xxh_u8* secret, XXH64
         xxh_u64 const bitfliph = (XXH_readLE64(secret+48) ^ XXH_readLE64(secret+56)) + seed;
         xxh_u64 const input_lo = XXH_readLE64(input);
         xxh_u64       input_hi = XXH_readLE64(input + len - 8);
-        XXH128_hash_t m128 = XXH_mult64to128(input_lo ^ input_hi ^ bitflipl, PRIME64_1);
+        XXH128_hash_t m128 = XXH_mult64to128(input_lo ^ input_hi ^ bitflipl, XXH_PRIME64_1);
         /*
          * Put len in the middle of m128 to ensure that the length gets mixed to
          * both the low and high bits in the 128x64 multiply below.
@@ -2117,7 +2341,7 @@ XXH3_len_9to16_128b(const xxh_u8* input, size_t len, const xxh_u8* secret, XXH64
         input_hi   ^= bitfliph;
         /*
          * Add the high 32 bits of input_hi to the high 32 bits of m128, then
-         * add the long product of the low 32 bits of input_hi and PRIME32_2 to
+         * add the long product of the low 32 bits of input_hi and XXH_PRIME32_2 to
          * the high 64 bits of m128.
          *
          * The best approach to this operation is different on 32-bit and 64-bit.
@@ -2129,7 +2353,7 @@ XXH3_len_9to16_128b(const xxh_u8* input, size_t len, const xxh_u8* secret, XXH64
              * On 32-bit, it removes an ADC and delays a dependency between the two
              * halves of m128.high64, but it generates an extra mask on 64-bit.
              */
-            m128.high64 += (input_hi & 0xFFFFFFFF00000000ULL) + XXH_mult32to64((xxh_u32)input_hi, PRIME32_2);
+            m128.high64 += (input_hi & 0xFFFFFFFF00000000ULL) + XXH_mult32to64((xxh_u32)input_hi, XXH_PRIME32_2);
         } else {
             /*
              * 64-bit optimized (albeit more confusing) version.
@@ -2139,7 +2363,7 @@ XXH3_len_9to16_128b(const xxh_u8* input, size_t len, const xxh_u8* secret, XXH64
              * Let:
              *    a = input_hi.lo = (input_hi & 0x00000000FFFFFFFF)
              *    b = input_hi.hi = (input_hi & 0xFFFFFFFF00000000)
-             *    c = PRIME32_2
+             *    c = XXH_PRIME32_2
              *
              *    a + (b * c)
              * Inverse Property: x + y - x == y
@@ -2150,19 +2374,19 @@ XXH3_len_9to16_128b(const xxh_u8* input, size_t len, const xxh_u8* secret, XXH64
              *    a + b + (b * (c - 1))
              *
              * Substitute a, b, and c:
-             *    input_hi.hi + input_hi.lo + ((xxh_u64)input_hi.lo * (PRIME32_2 - 1))
+             *    input_hi.hi + input_hi.lo + ((xxh_u64)input_hi.lo * (XXH_PRIME32_2 - 1))
              *
              * Since input_hi.hi + input_hi.lo == input_hi, we get this:
-             *    input_hi + ((xxh_u64)input_hi.lo * (PRIME32_2 - 1))
+             *    input_hi + ((xxh_u64)input_hi.lo * (XXH_PRIME32_2 - 1))
              */
-            m128.high64 += input_hi + XXH_mult32to64((xxh_u32)input_hi, PRIME32_2 - 1);
+            m128.high64 += input_hi + XXH_mult32to64((xxh_u32)input_hi, XXH_PRIME32_2 - 1);
         }
         /* m128 ^= XXH_swap64(m128 >> 64); */
         m128.low64  ^= XXH_swap64(m128.high64);
 
-        {   /* 128x64 multiply: h128 = m128 * PRIME64_2; */
-            XXH128_hash_t h128 = XXH_mult64to128(m128.low64, PRIME64_2);
-            h128.high64 += m128.high64 * PRIME64_2;
+        {   /* 128x64 multiply: h128 = m128 * XXH_PRIME64_2; */
+            XXH128_hash_t h128 = XXH_mult64to128(m128.low64, XXH_PRIME64_2);
+            h128.high64 += m128.high64 * XXH_PRIME64_2;
 
             h128.low64   = XXH3_avalanche(h128.low64);
             h128.high64  = XXH3_avalanche(h128.high64);
@@ -2183,8 +2407,8 @@ XXH3_len_0to16_128b(const xxh_u8* input, size_t len, const xxh_u8* secret, XXH64
         {   XXH128_hash_t h128;
             xxh_u64 const bitflipl = XXH_readLE64(secret+64) ^ XXH_readLE64(secret+72);
             xxh_u64 const bitfliph = XXH_readLE64(secret+80) ^ XXH_readLE64(secret+88);
-            h128.low64 = XXH3_avalanche((PRIME64_1 + seed) ^ bitflipl);
-            h128.high64 = XXH3_avalanche((PRIME64_2 - seed) ^ bitfliph);
+            h128.low64 = XXH3_avalanche((XXH_PRIME64_1 + seed) ^ bitflipl);
+            h128.high64 = XXH3_avalanche((XXH_PRIME64_2 - seed) ^ bitfliph);
             return h128;
     }   }
 }
@@ -2213,7 +2437,7 @@ XXH3_len_17to128_128b(const xxh_u8* XXH_RESTRICT input, size_t len,
     XXH_ASSERT(16 < len && len <= 128);
 
     {   XXH128_hash_t acc;
-        acc.low64 = len * PRIME64_1;
+        acc.low64 = len * XXH_PRIME64_1;
         acc.high64 = 0;
         if (len > 32) {
             if (len > 64) {
@@ -2227,9 +2451,9 @@ XXH3_len_17to128_128b(const xxh_u8* XXH_RESTRICT input, size_t len,
         acc = XXH128_mix32B(acc, input, input+len-16, secret, seed);
         {   XXH128_hash_t h128;
             h128.low64  = acc.low64 + acc.high64;
-            h128.high64 = (acc.low64    * PRIME64_1)
-                        + (acc.high64   * PRIME64_4)
-                        + ((len - seed) * PRIME64_2);
+            h128.high64 = (acc.low64    * XXH_PRIME64_1)
+                        + (acc.high64   * XXH_PRIME64_4)
+                        + ((len - seed) * XXH_PRIME64_2);
             h128.low64  = XXH3_avalanche(h128.low64);
             h128.high64 = (XXH64_hash_t)0 - XXH3_avalanche(h128.high64);
             return h128;
@@ -2248,7 +2472,7 @@ XXH3_len_129to240_128b(const xxh_u8* XXH_RESTRICT input, size_t len,
     {   XXH128_hash_t acc;
         int const nbRounds = (int)len / 32;
         int i;
-        acc.low64 = len * PRIME64_1;
+        acc.low64 = len * XXH_PRIME64_1;
         acc.high64 = 0;
         for (i=0; i<4; i++) {
             acc = XXH128_mix32B(acc,
@@ -2276,9 +2500,9 @@ XXH3_len_129to240_128b(const xxh_u8* XXH_RESTRICT input, size_t len,
 
         {   XXH128_hash_t h128;
             h128.low64  = acc.low64 + acc.high64;
-            h128.high64 = (acc.low64    * PRIME64_1)
-                        + (acc.high64   * PRIME64_4)
-                        + ((len - seed) * PRIME64_2);
+            h128.high64 = (acc.low64    * XXH_PRIME64_1)
+                        + (acc.high64   * XXH_PRIME64_4)
+                        + ((len - seed) * XXH_PRIME64_2);
             h128.low64  = XXH3_avalanche(h128.low64);
             h128.high64 = (XXH64_hash_t)0 - XXH3_avalanche(h128.high64);
             return h128;
@@ -2290,7 +2514,7 @@ XXH_FORCE_INLINE XXH128_hash_t
 XXH3_hashLong_128b_internal(const xxh_u8* XXH_RESTRICT input, size_t len,
                             const xxh_u8* XXH_RESTRICT secret, size_t secretSize)
 {
-    XXH_ALIGN(XXH_ACC_ALIGN) xxh_u64 acc[ACC_NB] = XXH3_INIT_ACC;
+    XXH_ALIGN(XXH_ACC_ALIGN) xxh_u64 acc[XXH_ACC_NB] = XXH3_INIT_ACC;
 
     XXH3_hashLong_internal_loop(acc, input, len, secret, secretSize, XXH3_acc_128bits);
 
@@ -2300,11 +2524,11 @@ XXH3_hashLong_128b_internal(const xxh_u8* XXH_RESTRICT input, size_t len,
     {   XXH128_hash_t h128;
         h128.low64  = XXH3_mergeAccs(acc,
                                      secret + XXH_SECRET_MERGEACCS_START,
-                                     (xxh_u64)len * PRIME64_1);
+                                     (xxh_u64)len * XXH_PRIME64_1);
         h128.high64 = XXH3_mergeAccs(acc,
                                      secret + secretSize
                                             - sizeof(acc) - XXH_SECRET_MERGEACCS_START,
-                                     ~((xxh_u64)len * PRIME64_2));
+                                     ~((xxh_u64)len * XXH_PRIME64_2));
         return h128;
     }
 }
@@ -2316,7 +2540,7 @@ XXH3_hashLong_128b_internal(const xxh_u8* XXH_RESTRICT input, size_t len,
 XXH_NO_INLINE XXH3_DISPATCH_FUNC XXH128_hash_t
 XXH3_hashLong_128b_defaultSecret(const xxh_u8* input, size_t len)
 {
-    return XXH3_hashLong_128b_internal(input, len, kSecret, sizeof(kSecret));
+    return XXH3_hashLong_128b_internal(input, len, XXH3_kSecret, sizeof(XXH3_kSecret));
 }
 
 /*
@@ -2337,21 +2561,33 @@ XXH3_hashLong_128b_withSecret(const xxh_u8* input, size_t len,
 XXH_NO_INLINE XXH3_DISPATCH_FUNC XXH128_hash_t
 XXH3_hashLong_128b_withSeed(const xxh_u8* input, size_t len, XXH64_hash_t seed)
 {
-    XXH_ALIGN(8) xxh_u8 secret[XXH_SECRET_DEFAULT_SIZE];
     if (seed == 0) return XXH3_hashLong_128b_defaultSecret(input, len);
-    XXH3_initCustomSecret(secret, seed);
-    return XXH3_hashLong_128b_internal(input, len, secret, sizeof(secret));
+#if XXH_VECTOR == XXH_AVX2 || XXH_VECTOR == XXH_AVX512
+    // manually deal with alignment of the custom secret
+    // this will avoid pushing the rsp register to stack
+    XXH_STATIC_ASSERT(XXH_SEC_ALIGN <= 64);
+    {   XXH_ALIGN(8) xxh_u8 secret[XXH_SECRET_DEFAULT_SIZE+64];
+        XXH_ALIGN(64) xxh_u8 *const secretAlign64 = (xxh_u8*)((size_t)(secret+63)&~63ULL);
+        XXH3_initCustomSecret(secretAlign64, seed);
+        return XXH3_hashLong_128b_internal(input, len, secretAlign64, XXH_SECRET_DEFAULT_SIZE);
+    }
+#else
+    {   XXH_ALIGN(XXH_SEC_ALIGN) xxh_u8 secret[XXH_SECRET_DEFAULT_SIZE];
+        XXH3_initCustomSecret(secret, seed);
+        return XXH3_hashLong_128b_internal(input, len, secret, sizeof(secret));
+    }
+#endif
 }
 
 
 XXH_PUBLIC_API XXH128_hash_t XXH3_128bits(const void* input, size_t len)
 {
     if (len <= 16)
-        return XXH3_len_0to16_128b((const xxh_u8*)input, len, kSecret, 0);
+        return XXH3_len_0to16_128b((const xxh_u8*)input, len, XXH3_kSecret, 0);
     if (len <= 128)
-        return XXH3_len_17to128_128b((const xxh_u8*)input, len, kSecret, sizeof(kSecret), 0);
+        return XXH3_len_17to128_128b((const xxh_u8*)input, len, XXH3_kSecret, sizeof(XXH3_kSecret), 0);
     if (len <= XXH3_MIDSIZE_MAX)
-        return XXH3_len_129to240_128b((const xxh_u8*)input, len, kSecret, sizeof(kSecret), 0);
+        return XXH3_len_129to240_128b((const xxh_u8*)input, len, XXH3_kSecret, sizeof(XXH3_kSecret), 0);
     XXH3_DISPATCH_RETURN(hashLong_128b_defaultSecret, ((const xxh_u8*)input, len));
 }
 
@@ -2378,11 +2614,11 @@ XXH_PUBLIC_API XXH128_hash_t
 XXH3_128bits_withSeed(const void* input, size_t len, XXH64_hash_t seed)
 {
     if (len <= 16)
-        return XXH3_len_0to16_128b((const xxh_u8*)input, len, kSecret, seed);
+        return XXH3_len_0to16_128b((const xxh_u8*)input, len, XXH3_kSecret, seed);
     if (len <= 128)
-         return XXH3_len_17to128_128b((const xxh_u8*)input, len, kSecret, sizeof(kSecret), seed);
+         return XXH3_len_17to128_128b((const xxh_u8*)input, len, XXH3_kSecret, sizeof(XXH3_kSecret), seed);
     if (len <= XXH3_MIDSIZE_MAX)
-         return XXH3_len_129to240_128b((const xxh_u8*)input, len, kSecret, sizeof(kSecret), seed);
+         return XXH3_len_129to240_128b((const xxh_u8*)input, len, XXH3_kSecret, sizeof(XXH3_kSecret), seed);
     XXH3_DISPATCH_RETURN(hashLong_128b_withSeed, ((const xxh_u8*)input, len, seed));
 }
 
@@ -2412,7 +2648,7 @@ XXH_PUBLIC_API XXH_errorcode
 XXH3_128bits_reset(XXH3_state_t* statePtr)
 {
     if (statePtr == NULL) return XXH_ERROR;
-    XXH3_128bits_reset_internal(statePtr, 0, kSecret, XXH_SECRET_DEFAULT_SIZE);
+    XXH3_128bits_reset_internal(statePtr, 0, XXH3_kSecret, XXH_SECRET_DEFAULT_SIZE);
     return XXH_OK;
 }
 
@@ -2430,9 +2666,9 @@ XXH_PUBLIC_API XXH_errorcode
 XXH3_128bits_reset_withSeed(XXH3_state_t* statePtr, XXH64_hash_t seed)
 {
     if (statePtr == NULL) return XXH_ERROR;
-    XXH3_128bits_reset_internal(statePtr, seed, kSecret, XXH_SECRET_DEFAULT_SIZE);
+    XXH3_128bits_reset_internal(statePtr, seed, XXH3_kSecret, XXH_SECRET_DEFAULT_SIZE);
     XXH3_initCustomSecret(statePtr->customSecret, seed);
-    statePtr->secret = statePtr->customSecret;
+    statePtr->extSecret = NULL;
     return XXH_OK;
 }
 #ifdef XXH_DISPATCH
@@ -2454,18 +2690,19 @@ XXH3_128bits_update(XXH3_state_t* state, const void* input, size_t len)
 
 XXH_PUBLIC_API XXH128_hash_t XXH3_128bits_digest (const XXH3_state_t* state)
 {
+    const unsigned char* const secret = (state->extSecret == NULL) ? state->customSecret : state->extSecret;
     if (state->totalLen > XXH3_MIDSIZE_MAX) {
-        XXH_ALIGN(XXH_ACC_ALIGN) XXH64_hash_t acc[ACC_NB];
-        XXH3_digest_long(acc, state, XXH3_acc_128bits);
-        XXH_ASSERT(state->secretLimit + STRIPE_LEN >= sizeof(acc) + XXH_SECRET_MERGEACCS_START);
+        XXH_ALIGN(XXH_ACC_ALIGN) XXH64_hash_t acc[XXH_ACC_NB];
+        XXH3_digest_long(acc, state, secret, XXH3_acc_128bits);
+        XXH_ASSERT(state->secretLimit + XXH_STRIPE_LEN >= sizeof(acc) + XXH_SECRET_MERGEACCS_START);
         {   XXH128_hash_t h128;
             h128.low64  = XXH3_mergeAccs(acc,
-                                         state->secret + XXH_SECRET_MERGEACCS_START,
-                                         (xxh_u64)state->totalLen * PRIME64_1);
+                                         secret + XXH_SECRET_MERGEACCS_START,
+                                         (xxh_u64)state->totalLen * XXH_PRIME64_1);
             h128.high64 = XXH3_mergeAccs(acc,
-                                         state->secret + state->secretLimit + STRIPE_LEN
-                                                       - sizeof(acc) - XXH_SECRET_MERGEACCS_START,
-                                         ~((xxh_u64)state->totalLen * PRIME64_2));
+                                         secret + state->secretLimit + XXH_STRIPE_LEN
+                                                - sizeof(acc) - XXH_SECRET_MERGEACCS_START,
+                                         ~((xxh_u64)state->totalLen * XXH_PRIME64_2));
             return h128;
         }
     }
@@ -2473,7 +2710,7 @@ XXH_PUBLIC_API XXH128_hash_t XXH3_128bits_digest (const XXH3_state_t* state)
     if (state->seed)
         return XXH3_128bits_withSeed(state->buffer, (size_t)state->totalLen, state->seed);
     return XXH3_128bits_withSecret(state->buffer, (size_t)(state->totalLen),
-                                   state->secret, state->secretLimit + STRIPE_LEN);
+                                   secret, state->secretLimit + XXH_STRIPE_LEN);
 }
 
 /* Don't emit a symbol if we are inlining, aside from when compiling clones. */
